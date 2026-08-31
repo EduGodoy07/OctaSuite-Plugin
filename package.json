@@ -1,0 +1,29 @@
+{
+  "name": "octasuite-plugin",
+  "version": "0.10.0",
+  "private": true,
+  "description": "OctaSuite Lite \u2014 micro-ERP standalone para Obsidian (gastos, contactos, productos, facturacion). Los datos viven en tu vault.",
+  "workspaces": [
+    "core"
+  ],
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -b core .",
+    "build": "npm run typecheck && node esbuild.config.mjs production",
+    "dev": "node esbuild.config.mjs",
+    "deploy": "bash scripts/deploy.sh"
+  },
+  "dependencies": {
+    "@octasuite/core": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "builtin-modules": "^4.0.0",
+    "esbuild": "^0.24.0",
+    "obsidian": "^1.7.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  },
+  "license": "MIT"
+}

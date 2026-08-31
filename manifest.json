@@ -1,0 +1,9 @@
+{
+  "id": "octasuite-lite",
+  "name": "OctaSuite Lite",
+  "version": "0.10.0",
+  "minAppVersion": "1.5.0",
+  "description": "Micro-ERP offline: gastos, contactos, productos y facturacion. Los datos viven en tu vault.",
+  "author": "HighSoftTech",
+  "isDesktopOnly": false
+}
