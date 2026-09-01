@@ -87,17 +87,56 @@ Después: Obsidian → Configuración → Plugins de la comunidad → activar
   ```
   ````
 
+## Multi-empresa
+
+El plugin mantiene el journal **particionado por empresa**. Cada empresa tiene su
+propia carpeta de eventos y su propio estado reconstruido:
+
+```
+octasuite-data/
+  journal/
+    principal/            empresa 1 (por defecto)
+      2026-08.jsonl       append-only, un evento por línea
+    secundaria/           empresa 2 (creada al seleccionarla en Ajustes)
+      2026-08.jsonl
+    legacy.jsonl          (opcional) eventos planos de versiones anteriores
+                         → se atribuyen a `principal`
+  catalogs/               semillas exportadas del ERP
+```
+
+- **Empresa activa** — se elige en *Ajustes → Empresa activa* (dropdown).
+  El listado sale del filesystem: solo muestra empresas que ya tienen datos.
+- **Cambiar de empresa** reconstruye el estado desde esa partición y todas las
+  vistas se refrescan. Es seguro incluso si otra carga estaba en curso (el
+  reload es race-safe por generación).
+- **Empresa `principal`** es la predeterminada. Los eventos de versiones
+  anteriores sin empresa (`journal/*.jsonl` plano) se le atribuyen a ella.
+- Los datos de cada empresa viven en carpetas separadas del vault; se pueden
+  versionar con git de forma independiente.
+
+> **Compatibilidad:** la partición por empresa convive con el formato plano
+> anterior (`journal/{month}.jsonl`). Al actualizar, los eventos existentes se
+> migran a `principal` automáticamente.
+
 ## Datos
 
 ```
 octasuite-data/
-  journal/2026-08.jsonl    append-only, un evento por línea
-  catalogs/                semillas exportadas del ERP
+  journal/{empresa}/YYYY-MM.jsonl   append-only, un evento por línea
+  catalogs/                         semillas exportadas del ERP
 ```
 
 El journal es la fuente de verdad. Es texto, versionable con git, y se puede
 inspeccionar con `cat`. Si dos dispositivos escribieron offline, los eventos se
 reconcilian deduplicando por id.
+
+## Deuda conocida
+
+Las dependencias de **desarrollo** (`esbuild`, `vite`, `vitest`) tienen
+vulnerabilidades reportadas por `npm audit` (3 moderadas, 1 alta, 1 crítica).
+No afectan al plugin instalado: `main.js` está bundleado y no arrastra esas
+dependencias en runtime. El fix (`npm audit fix --force`) es un upgrade con
+breaking changes que se hará junto con la próxima actualización del toolchain.
 
 ## Licencia
 
