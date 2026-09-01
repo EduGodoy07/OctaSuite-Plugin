@@ -183,6 +183,34 @@ describe("VaultJournal (particion por empresa)", () => {
     expect(principal.folderName === secundaria.folderName && principal.companyIdentifier !== secundaria.companyIdentifier).toBe(true);
   });
 
+  it("append con company.created crea la partición y listCompanyIds la incluye", async () => {
+    const memory = new MemoryAdapter();
+    const vault = adapter({ adapter: memory });
+    const journal = new VaultJournal(vault, FOLDER, DEFAULT_COMPANY_ID);
+
+    const event: AnyEvent = {
+      id: "created_1",
+      at: "2026-08-28T12:00:00.000Z",
+      v: 1,
+      type: "company.created",
+      payload: { companyId: "nueva-empresa", name: "Nueva Empresa", baseCurrency: "USD" },
+    } as AnyEvent;
+
+    await journal.append(event, "nueva-empresa");
+
+    // La partición debe existir con el archivo del mes.
+    expect(await memory.exists(`${FOLDER}/journal/nueva-empresa/2026-08.jsonl`)).toBe(true);
+
+    // El contenido del archivo debe contener el evento.
+    const content = await memory.read(`${FOLDER}/journal/nueva-empresa/2026-08.jsonl`);
+    const parsed = JSON.parse(content.trim()) as AnyEvent;
+    expect(parsed.type).toBe("company.created");
+    expect(parsed.payload).toMatchObject({ companyId: "nueva-empresa", name: "Nueva Empresa", baseCurrency: "USD" });
+
+    // listCompanyIds debe devolver la empresa nueva.
+    expect(await journal.listCompanyIds()).toContain("nueva-empresa");
+  });
+
   it("listCompanyIds excluye empresas sin datos; la activa aún puede no estar en la lista", async () => {
     const memory = new MemoryAdapter();
     const vault = adapter({ adapter: memory });

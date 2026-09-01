@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { activeCompanies, project, validateCompanyDraft, type AnyEvent } from "../src/index.js";
+import {
+  activeCompanies,
+  project,
+  slugifyCompanyId,
+  validateCompanyDraft,
+  validateCompanyId,
+  type AnyEvent,
+} from "../src/index.js";
 
 let seq = 0;
 const at = (day: number) => `2026-08-${day.toString().padStart(2, "0")}T12:00:00.000Z`;
@@ -76,5 +83,63 @@ describe("Proyeccion de empresas", () => {
       evt("company.archived", 3, { companyId: "emp_b" }),
     ]);
     expect(activeCompanies(state).map((c) => c.id)).toEqual(["emp_a"]);
+  });
+});
+
+describe("slugifyCompanyId", () => {
+  it("minúsculas y espacios a guiones", () => {
+    expect(slugifyCompanyId("Segunda Empresa")).toBe("segunda-empresa");
+    expect(slugifyCompanyId("  Principal  ")).toBe("principal");
+  });
+
+  it("quita acentos", () => {
+    expect(slugifyCompanyId("Cafetería Águila")).toBe("cafeteria-aguila");
+  });
+
+  it("colapsa símbolos no-alfanuméricos y recorta bordes", () => {
+    expect(slugifyCompanyId("Mi -- Empresa!!!")).toBe("mi-empresa");
+    expect(slugifyCompanyId("---emp---")).toBe("emp");
+  });
+
+  it("devuelve vacío si no quedan caracteres utilizables", () => {
+    expect(slugifyCompanyId("!!!")).toBe("");
+  });
+
+  it("salida no vacía de slugify siempre es un companyId válido", () => {
+    const names = ["Mi Empresa", "Café & Té", "!!!", "---", "A", "Empresa 123", "Ñoño", "Alcázar Real"];
+    for (const name of names) {
+      const slug = slugifyCompanyId(name);
+      if (slug) {
+        expect(validateCompanyId(slug)).toEqual([]);
+      }
+    }
+  });
+});
+
+describe("validateCompanyId", () => {
+  it("acepta ids válidos incluyendo 'principal'", () => {
+    expect(validateCompanyId("principal")).toEqual([]);
+    expect(validateCompanyId("secundaria-2")).toEqual([]);
+    expect(validateCompanyId("emp1")).toEqual([]);
+  });
+
+  it("rechaza vacío", () => {
+    expect(validateCompanyId("")[0]?.code).toBe("company.id_required");
+  });
+
+  it("rechaza mayúsculas, espacios y símbolos inválidos", () => {
+    expect(validateCompanyId("Segunda")[0]?.code).toBe("company.id_invalid");
+    expect(validateCompanyId("segunda empresa")[0]?.code).toBe("company.id_invalid");
+    expect(validateCompanyId("emp_1")[0]?.code).toBe("company.id_invalid");
+    expect(validateCompanyId("mi.empresa")[0]?.code).toBe("company.id_invalid");
+  });
+
+  it("rechaza ids con más de 64 caracteres", () => {
+    const long = "a".repeat(65);
+    expect(validateCompanyId(long)[0]?.code).toBe("company.id_too_long");
+  });
+
+  it("acepta ids de exactamente 64 caracteres", () => {
+    expect(validateCompanyId("a".repeat(64))).toEqual([]);
   });
 });

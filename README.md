@@ -97,7 +97,7 @@ octasuite-data/
   journal/
     principal/            empresa 1 (por defecto)
       2026-08.jsonl       append-only, un evento por línea
-    secundaria/           empresa 2 (creada al seleccionarla en Ajustes)
+    secundaria/           empresa 2 (creada desde Ajustes → Crear empresa)
       2026-08.jsonl
     legacy.jsonl          (opcional) eventos planos de versiones anteriores
                          → se atribuyen a `principal`

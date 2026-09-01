@@ -1,18 +1,24 @@
 import {
   DEFAULT_EXPENSE_CATEGORY_NAMES,
+  DomainError,
   apply,
   categoryCode,
   emptyState,
   expensesByCategory,
   format,
   generateId,
+  knownBaseCurrencies,
   monthKeyOf,
   project,
+  slugifyCompanyId,
   toIsoDate,
   totalExpenses,
   totalInvoiced,
+  validateCompanyDraft,
+  validateCompanyId,
   type AnyEvent,
   type Category,
+  type CurrencyCode,
   type ParseResult,
   type RejectedEvent,
   type State,
@@ -186,6 +192,42 @@ export default class OctaSuitePlugin extends Plugin implements PluginHost {
       return [this.settings.activeCompanyId];
     }
   }
+
+  /**
+   * Crea una empresa: partición del journal + evento `company.created` como primer evento,
+   * la activa, y sincroniza la moneda global a la moneda base de la empresa.
+   * El ID se deriva del nombre si no se pasa explícitamente.
+   */
+  async createCompany(name: string, baseCurrency: string, companyId?: string): Promise<string> {
+    const id = companyId?.trim() || slugifyCompanyId(name);
+    const errors = [
+      ...validateCompanyId(id),
+      ...validateCompanyDraft({ name, baseCurrency: baseCurrency as CurrencyCode }),
+    ];
+
+    // Colisión: empresas con partición existente + la activa aunque aún no tenga datos.
+    const taken = new Set(await this.journalCompanies());
+    taken.add(this.settings.activeCompanyId);
+    if (taken.has(id)) {
+      errors.push(new DomainError(`Ya existe una empresa con el ID "${id}"`, "company.id_taken"));
+    }
+    if (errors.length === 1) {
+      throw errors[0];
+    }
+    if (errors.length > 1) {
+      // errors[0] existe: este bloque solo corre cuando hay más de un error.
+      throw new DomainError(errors.map((e) => e.message).join("; "), errors[0]!.code);
+    }
+
+    const event = this.newEvent("company.created", { companyId: id, name, baseCurrency });
+    await this.journal.append(event, id);
+    this.settings.activeCompanyId = id;
+    this.settings.currency = baseCurrency;
+    await this.saveSettings(); // detecta el cambio de empresa y recarga con la partición nueva.
+    return id;
+  }
+
+
 
   /** Reconstruye el estado desde el journal, que es la única fuente de verdad. */
   async reload(notify: boolean): Promise<void> {
@@ -505,6 +547,62 @@ class OctaSuiteSettingTab extends PluginSettingTab {
 
     void this.renderCompanySwitcher(containerEl);
 
+    // ── Crear empresa ───────────────────────────────────────────────
+    {
+      let name = "";
+      let baseCurrency: CurrencyCode = this.plugin.settings.currency as CurrencyCode;
+      let customId = "";
+
+      new Setting(containerEl)
+        .setName("Crear empresa")
+        .setDesc("Escribe un nombre para crear una partición nueva del journal.")
+        .addText((text) =>
+          text
+            .setPlaceholder("Nombre de la nueva empresa")
+            .onChange((value) => {
+              name = value.trim();
+            }),
+        );
+
+      new Setting(containerEl)
+        .setName("Moneda base")
+        .setDesc("Define la moneda funcional de esta empresa.")
+        .addDropdown((dropdown) => {
+          for (const code of knownBaseCurrencies()) dropdown.addOption(code, code);
+          dropdown.setValue(baseCurrency);
+          dropdown.onChange((value) => {
+            baseCurrency = value as CurrencyCode;
+          });
+        });
+
+      new Setting(containerEl)
+        .setName("ID de carpeta (opcional)")
+        .setDesc("Ej: `secundaria`. Por defecto se deriva del nombre.")
+        .addText((text) =>
+          text
+            .setPlaceholder("auto desde el nombre")
+            .onChange((value) => {
+              customId = value.trim();
+            }),
+        );
+
+      new Setting(containerEl).addButton((button) =>
+        button
+          .setButtonText("Crear")
+          .setCta()
+          .onClick(async () => {
+            try {
+              const id = await this.plugin.createCompany(name, baseCurrency, customId);
+              new Notice(`Empresa creada: ${id}`);
+              this.display();
+            } catch (error) {
+              new Notice(error instanceof Error ? error.message : String(error));
+            }
+          }),
+      );
+    }
+
+    // ── Moneda ──────────────────────────────────────────────────────
     new Setting(containerEl)
       .setName("Moneda")
       .setDesc("Código ISO 4217. Los importes se guardan en centavos de esta moneda.")
