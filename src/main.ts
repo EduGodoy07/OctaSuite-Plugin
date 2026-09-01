@@ -41,7 +41,7 @@ import {
   type ModuleDef,
 } from "./modules.js";
 import { DEFAULT_SETTINGS, type OctaSuiteSettings } from "./settings.js";
-import { VaultJournal } from "./storage/vault-journal.js";
+import { DEFAULT_COMPANY_ID, VaultJournal } from "./storage/vault-journal.js";
 import { ExpensesView } from "./ui/expenses-view.js";
 import type { PluginHost } from "./ui/host.js";
 import { InvoicesView } from "./ui/invoices-view.js";
@@ -85,8 +85,11 @@ export default class OctaSuitePlugin extends Plugin implements PluginHost {
   rejectedCount = 0;
   corruptCount = 0;
 
-  /** Se resuelve cuando termina el primer reload; las vistas esperan antes de commitear. */
+  /** Se resuelve cuando termina la carga MÁS RECIENTE del journal (por empresa). Las vistas la esperan antes de commitear. */
   ready: Promise<void> = Promise.resolve();
+
+  /** Contador de generación de recargas: distingue la carga actual de las anteriores (para el race de cambio de empresa). */
+  private reloadGen = 0;
 
   /** Últimos eventos rechazados al reconstruir el estado (para avisos específicos). */
   lastRejections: RejectedEvent[] = [];
@@ -145,9 +148,10 @@ export default class OctaSuitePlugin extends Plugin implements PluginHost {
     // adapter todavía no responde durante onload.
     this.app.workspace.onLayoutReady(() => {
       this.normalizeLayout();
-      // `ready` queda pendiente hasta que el estado se reconstruya desde el journal:
-      // ninguna vista debe commitear un seed (p. ej. "Principal") contra un estado a medio cargar.
-      this.ready = this.reload(false);
+      // `reload()` re-asigna `this.ready` y lo resuelve cuando termina la carga más
+      // reciente: ninguna vista debe commitear un seed (p. ej. "Principal") contra un
+      // estado a medio cargar o de otra empresa.
+      void this.reload(false);
     });
   }
 
@@ -160,12 +164,41 @@ export default class OctaSuitePlugin extends Plugin implements PluginHost {
 
   async saveSettings(): Promise<void> {
     await this.saveData(this.settings);
-    this.journal = new VaultJournal(this.app.vault, this.settings.dataFolder, this.settings.activeCompanyId);
+    const next = new VaultJournal(this.app.vault, this.settings.dataFolder, this.settings.activeCompanyId);
+    // Cambiar la carpeta o la empresa activa cambia QUÉ partición del journal se lee:
+    // hay que reconstruir el estado. El resto de campos de settings (perfil, IVA, etc.)
+    // no cambian el origen, así que solo se refrescan las vistas (sin re-leer del disco).
+    const journalChanged = next.folderName !== this.journal.folderName || next.companyIdentifier !== this.journal.companyIdentifier;
+    this.journal = next;
+    if (journalChanged) {
+      await this.reload(false);
+      return;
+    }
     this.refreshViews();
+  }
+
+  /** Empresas que existen en el journal (las que tienen partición con datos). Fuente única: el filesystem. */
+  async journalCompanies(): Promise<string[]> {
+    try {
+      return await this.journal!.listCompanyIds();
+    } catch (error) {
+      console.error("[OctaSuite] no se pudieron listar las empresas", error);
+      return [this.settings.activeCompanyId];
+    }
   }
 
   /** Reconstruye el estado desde el journal, que es la única fuente de verdad. */
   async reload(notify: boolean): Promise<void> {
+    // Cada recarga (incluido el cambio de empresa) reinicia `ready`: las vistas que
+    // esperan `this.host.ready` deben esperar esta carga, no la del primer arranque.
+    // Un generador evita que una recarga vieja que terminó tarde "libere" a las vistas
+    // antes de que termine la más reciente (race de sembrar contra el estado equivocado).
+    const gen = ++this.reloadGen;
+    let settleReady!: () => void;
+    this.ready = new Promise<void>((resolve) => {
+      settleReady = resolve;
+    });
+
     try {
       await this.journal.ensureFolders();
       const { events, corrupt } = await this.journal.loadAll();
@@ -185,6 +218,10 @@ export default class OctaSuitePlugin extends Plugin implements PluginHost {
     } catch (error) {
       console.error("[OctaSuite] no se pudo cargar el journal", error);
       new Notice(`OctaSuite: no se pudo leer ${this.settings.dataFolder}. Revisa la consola.`);
+    } finally {
+      // Solo la recarga más reciente resuelve `ready`. Las anteriores se descartan
+      // aunque terminen: liberar antes de tiempo reintroduciría el race.
+      if (gen === this.reloadGen) settleReady();
     }
   }
 
@@ -421,6 +458,37 @@ class OctaSuiteSettingTab extends PluginSettingTab {
     super(app, plugin);
   }
 
+  /**
+   * Selector de la empresa activa (solo selección). Se alimenta del filesystem
+   * (journal.listCompanyIds()), que es el origen único de verdad de las empresas
+   * existentes; el mapa muerto state.companies no se toca. Al cambiar se actualiza
+   * activeCompanyId y saveSettings() reconstruye el estado con la partición nueva.
+   */
+  private async renderCompanySwitcher(containerEl: HTMLElement): Promise<void> {
+    const companies = await this.plugin.journalCompanies();
+    // La empresa activa siempre es una opción válida, aunque todavía no tenga datos
+    // (listCompanyIds solo lista las que ya tienen archivos).
+    if (!companies.includes(this.plugin.settings.activeCompanyId)) {
+      companies.unshift(this.plugin.settings.activeCompanyId);
+    }
+    companies.sort((a, b) => a.localeCompare(b));
+
+    new Setting(containerEl)
+      .setName("Empresa activa")
+      .setDesc("La partición del journal que se lee y escribe. Cambiar reconstruye el estado.")
+      .addDropdown((dropdown) => {
+        for (const companyId of companies) {
+          dropdown.addOption(companyId, companyId === DEFAULT_COMPANY_ID ? `${companyId} (principal)` : companyId);
+        }
+        dropdown.setValue(this.plugin.settings.activeCompanyId);
+        dropdown.onChange(async (value) => {
+          if (value === this.plugin.settings.activeCompanyId) return;
+          this.plugin.settings.activeCompanyId = value || DEFAULT_COMPANY_ID;
+          await this.plugin.saveSettings(); // detecta el cambio de empresa y recarga el estado
+        });
+      });
+  }
+
   override display(): void {
     const { containerEl } = this;
     containerEl.empty();
@@ -434,6 +502,8 @@ class OctaSuiteSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
         }),
       );
+
+    void this.renderCompanySwitcher(containerEl);
 
     new Setting(containerEl)
       .setName("Moneda")

@@ -168,4 +168,34 @@ describe("VaultJournal (particion por empresa)", () => {
     expect(byCompany.get("principal")!.events.map((e) => e.id)).toEqual(["evt_legacy", "evt_principal"]);
     expect(byCompany.get("secundaria")!.events.map((e) => e.id)).toEqual(["evt_secundaria"]);
   });
+
+  it("identidad del journal cambia con la empresa activa (saveSettings decide recargar por esto)", async () => {
+    const memory = new MemoryAdapter();
+    const vault = adapter({ adapter: memory });
+
+    const principal = new VaultJournal(vault, FOLDER, DEFAULT_COMPANY_ID);
+    const secundaria = new VaultJournal(vault, FOLDER, "secundaria");
+
+    expect(principal.folderName).toBe(secundaria.folderName);
+    expect(principal.companyIdentifier).toBe(DEFAULT_COMPANY_ID);
+    expect(secundaria.companyIdentifier).toBe("secundaria");
+    // Misma carpeta, distinta empresa → identidad del journal distinta.
+    expect(principal.folderName === secundaria.folderName && principal.companyIdentifier !== secundaria.companyIdentifier).toBe(true);
+  });
+
+  it("listCompanyIds excluye empresas sin datos; la activa aún puede no estar en la lista", async () => {
+    const memory = new MemoryAdapter();
+    const vault = adapter({ adapter: memory });
+    await memory.mkdir(`${FOLDER}/journal`);
+    await memory.mkdir(`${FOLDER}/journal/${DEFAULT_COMPANY_ID}`);
+    await memory.write(
+      `${FOLDER}/journal/${DEFAULT_COMPANY_ID}/2026-08.jsonl`,
+      JSON.stringify(evt("evt_p", "2026-08-25T18:02:48.850Z")) + "\n",
+    );
+    // Empresa sin partición ni datos.
+    await memory.mkdir(`${FOLDER}/journal/sin_datos`);
+
+    const journal = new VaultJournal(vault, FOLDER);
+    expect(await journal.listCompanyIds()).toEqual([DEFAULT_COMPANY_ID]);
+  });
 });

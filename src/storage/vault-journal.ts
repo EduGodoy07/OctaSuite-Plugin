@@ -16,6 +16,16 @@ export class VaultJournal {
     private readonly companyId: string = DEFAULT_COMPANY_ID,
   ) {}
 
+  /** Identidad del journal: la carpeta de datos. Los cambios de carpeta implican otro journal. */
+  get folderName(): string {
+    return this.folder;
+  }
+
+  /** Identidad del journal: la empresa activa (particion `journal/{companyId}/`). */
+  get companyIdentifier(): string {
+    return this.companyId;
+  }
+
   private get adapter(): DataAdapter {
     return this.vault.adapter;
   }
