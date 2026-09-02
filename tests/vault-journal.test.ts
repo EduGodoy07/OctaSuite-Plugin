@@ -52,6 +52,14 @@ function adapter(vault: unknown): Vault {
   return vault as Vault;
 }
 
+/** Adapter que reporta los folders con slash final, como puede devolverlos Obsidian. */
+class SlashFolderAdapter extends MemoryAdapter {
+  async list(path: string): Promise<{ files: string[]; folders: string[] }> {
+    const result = await super.list(path);
+    return { files: result.files, folders: result.folders.map((f) => `${f}/`) };
+  }
+}
+
 /** Envelope minimo valido para mergeJournals: solo importa id/at/v/type/payload. */
 function evt(id: string, at: string, type = "category.created"): AnyEvent {
   return { id, at, v: 1, type, payload: { categoryId: id, name: id, code: id.toUpperCase() } } as AnyEvent;
@@ -138,6 +146,25 @@ describe("VaultJournal (particion por empresa)", () => {
     // Una carpeta sin archivos (empresa sin datos) no cuenta.
     await memory.mkdir(`${FOLDER}/journal/vacia`);
     expect(await memory.exists(`${FOLDER}/journal/vacia`)).toBe(true);
+
+    const journal = new VaultJournal(vault, FOLDER);
+    expect(await journal.listCompanyIds()).toEqual([DEFAULT_COMPANY_ID, "secundaria"]);
+  });
+
+  it("listCompanyIds tolera folders con slash final (N1)", async () => {
+    const memory = new SlashFolderAdapter();
+    const vault = adapter({ adapter: memory });
+    await memory.mkdir(`${FOLDER}/journal`);
+    await memory.mkdir(`${FOLDER}/journal/${DEFAULT_COMPANY_ID}`);
+    await memory.mkdir(`${FOLDER}/journal/secundaria`);
+    await memory.write(
+      `${FOLDER}/journal/${DEFAULT_COMPANY_ID}/2026-08.jsonl`,
+      JSON.stringify(evt("evt_p", "2026-08-25T18:02:48.850Z")) + "\n",
+    );
+    await memory.write(
+      `${FOLDER}/journal/secundaria/2026-08.jsonl`,
+      JSON.stringify(evt("evt_s", "2026-08-25T18:02:48.850Z")) + "\n",
+    );
 
     const journal = new VaultJournal(vault, FOLDER);
     expect(await journal.listCompanyIds()).toEqual([DEFAULT_COMPANY_ID, "secundaria"]);

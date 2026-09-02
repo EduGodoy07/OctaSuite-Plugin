@@ -803,6 +803,9 @@ export function apply(state: State, event: AnyEvent): RejectedEvent | null {
     case "inventory.location_archived": {
       const current = state.locations.get(event.payload.locationId);
       if (!current) return reject("not_found", `Ubicación inexistente: ${event.payload.locationId}`);
+      if (event.payload.locationId === PRIMARY_LOCATION_ID) {
+        return reject("inventory.immutable_primary", "La ubicación principal no se puede archivar");
+      }
       if (current.archived) return reject("already_archived", "La ubicación ya estaba archivada");
       state.locations.set(current.id, { ...current, archived: true, updatedAt: event.at });
       return null;

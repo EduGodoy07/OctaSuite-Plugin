@@ -425,7 +425,12 @@ export class EmployeeModal extends Modal {
     this.contractType = e?.contractType ?? "fijo";
     this.position = e?.position ?? "";
     const currentManager = e?.managerId ?? "";
-    this.managerId = options.managers.some((m) => m.id === currentManager) ? currentManager : "";
+    const managerAvailable = options.managers.some((m) => m.id === currentManager);
+    if (currentManager && !managerAvailable) {
+      // El jefe directo quedó archivado/inactivo: antes se limpiaba en silencio.
+      new Notice("El jefe directo de este empleado ya no está activo y se guardará sin jefe.");
+    }
+    this.managerId = managerAvailable ? currentManager : "";
     this.responsibilities = new Set(e?.responsibilities ?? []);
   }
 

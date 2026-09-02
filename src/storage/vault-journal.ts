@@ -84,7 +84,10 @@ export class VaultJournal {
     const listing = await this.adapter.list(this.legacyJournalDir);
     const ids: string[] = [];
     for (const folder of listing.folders) {
-      const companyId = folder.slice(folder.lastIndexOf("/") + 1);
+      // Obsidian puede reportar la carpeta con slash final; el basename debe
+      // extraerse sobre la ruta normalizada para no quedar vacío.
+      const normalized = folder.replace(/\/+$/, "");
+      const companyId = normalized.slice(normalized.lastIndexOf("/") + 1);
       if ((await this.listCompanyFiles(companyId)).length > 0) ids.push(companyId);
     }
     return ids.sort();

@@ -71,12 +71,21 @@ describe("Ubicaciones de inventario", () => {
 
   it("archiva ubicaciones y no re-archiva", () => {
     const { state, rejected } = project([
+      ubicacion("cerrada", "Cerrada"),
+      evt("inventory.location_archived", { locationId: "cerrada" }),
+      evt("inventory.location_archived", { locationId: "cerrada" }),
+    ]);
+    expect(locationById(state, "cerrada")?.archived).toBe(true);
+    expect(rejected.map((r) => r.code)).toEqual(["already_archived"]);
+  });
+
+  it("no archiva la ubicación principal (immutable_primary)", () => {
+    const { state, rejected } = project([
       ubicacion("main", "Principal", "main"),
       evt("inventory.location_archived", { locationId: "main" }),
-      evt("inventory.location_archived", { locationId: "main" }),
     ]);
-    expect(locationById(state, "main")?.archived).toBe(true);
-    expect(rejected.map((r) => r.code)).toEqual(["already_archived"]);
+    expect(locationById(state, "main")?.archived).toBe(false);
+    expect(rejected.map((r) => r.code)).toEqual(["inventory.immutable_primary"]);
   });
 
   it("edita nombre y tipo de una ubicación", () => {
