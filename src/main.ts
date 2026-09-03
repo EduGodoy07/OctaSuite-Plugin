@@ -168,19 +168,26 @@ export default class OctaSuitePlugin extends Plugin implements PluginHost {
     this.settings = { ...DEFAULT_SETTINGS, ...(stored ?? {}) };
   }
 
+  /** Cola secuencial para serializar escrituras de configuración y cambios de journal. */
+  private settingsSaveQueue: Promise<void> = Promise.resolve();
+
   async saveSettings(): Promise<void> {
-    await this.saveData(this.settings);
-    const next = new VaultJournal(this.app.vault, this.settings.dataFolder, this.settings.activeCompanyId);
-    // Cambiar la carpeta o la empresa activa cambia QUÉ partición del journal se lee:
-    // hay que reconstruir el estado. El resto de campos de settings (perfil, IVA, etc.)
-    // no cambian el origen, así que solo se refrescan las vistas (sin re-leer del disco).
-    const journalChanged = next.folderName !== this.journal.folderName || next.companyIdentifier !== this.journal.companyIdentifier;
-    this.journal = next;
-    if (journalChanged) {
-      await this.reload(false);
-      return;
-    }
-    this.refreshViews();
+    this.settingsSaveQueue = this.settingsSaveQueue.then(async () => {
+      await this.saveData(this.settings);
+      const next = new VaultJournal(this.app.vault, this.settings.dataFolder, this.settings.activeCompanyId);
+      // Cambiar la carpeta o la empresa activa cambia QUÉ partición del journal se lee:
+      // hay que reconstruir el estado. El resto de campos de settings (perfil, IVA, etc.)
+      // no cambian el origen, así que solo se refrescan las vistas (sin re-leer del disco).
+      const journalChanged =
+        next.folderName !== this.journal.folderName || next.companyIdentifier !== this.journal.companyIdentifier;
+      this.journal = next;
+      if (journalChanged) {
+        await this.reload(false);
+        return;
+      }
+      this.refreshViews();
+    });
+    return this.settingsSaveQueue;
   }
 
   /** Empresas que existen en el journal (las que tienen partición con datos). Fuente única: el filesystem. */

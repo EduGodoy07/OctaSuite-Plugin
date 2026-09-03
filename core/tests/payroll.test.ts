@@ -14,6 +14,7 @@ import {
   payrollRunById,
   payrollRunsInMonth,
   project,
+  rootEmployees,
   validateEmployeeDraft,
   verifyPayrollTotals,
   type AnyEvent,
@@ -272,5 +273,40 @@ describe("Empleados y períodos (store)", () => {
       evt("payroll.employee_updated", { employeeId: "e2", changes: { managerId: undefined } }),
     ]);
     expect(employeeById(state, "e2")?.managerId).toBeUndefined();
+  });
+
+  it("identifica raíces del organigrama (rootEmployees) incluyendo empleados cuyo jefe fue archivado", () => {
+    const { state } = project([
+      evt("payroll.employee_created", {
+        employeeId: "e1", name: "Ana (Gerente)", hireDate: "2026-08-01", baseSalary: q("9000"), contractType: "indefinido",
+      }),
+      evt("payroll.employee_created", {
+        employeeId: "e2", name: "Carlos (Subdirector)", hireDate: "2026-08-01", baseSalary: q("7000"), contractType: "indefinido", managerId: "e1",
+      }),
+      evt("payroll.employee_created", {
+        employeeId: "e3", name: "Beatriz (Especialista)", hireDate: "2026-08-01", baseSalary: q("5000"), contractType: "indefinido", managerId: "e2",
+      }),
+    ]);
+
+    // Inicialmente solo e1 (Ana) es raíz
+    expect(rootEmployees(state).map((e) => e.id)).toEqual(["e1"]);
+
+    // Se archiva e2 (Carlos). Ahora Beatriz (e3) tiene jefe archivado -> se convierte en raíz visible
+    const { state: stateAfterArchive } = project([
+      evt("payroll.employee_created", {
+        employeeId: "e1", name: "Ana (Gerente)", hireDate: "2026-08-01", baseSalary: q("9000"), contractType: "indefinido",
+      }),
+      evt("payroll.employee_created", {
+        employeeId: "e2", name: "Carlos (Subdirector)", hireDate: "2026-08-01", baseSalary: q("7000"), contractType: "indefinido", managerId: "e1",
+      }),
+      evt("payroll.employee_created", {
+        employeeId: "e3", name: "Beatriz (Especialista)", hireDate: "2026-08-01", baseSalary: q("5000"), contractType: "indefinido", managerId: "e2",
+      }),
+      evt("payroll.employee_archived", { employeeId: "e2" }),
+    ]);
+
+    // Raíces activas: Ana (e1) y Beatriz (e3) ordenada alfabéticamente
+    const roots = rootEmployees(stateAfterArchive);
+    expect(roots.map((e) => e.name)).toEqual(["Ana (Gerente)", "Beatriz (Especialista)"]);
   });
 });

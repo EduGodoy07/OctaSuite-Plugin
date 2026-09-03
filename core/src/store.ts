@@ -1459,6 +1459,19 @@ export function activeEmployees(state: State): Employee[] {
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
+/**
+ * Empleados que actúan como raíz en el organigrama:
+ * Aquellos activos sin jefe asignado, O cuyo jefe directo ya no está activo
+ * (inexistente o archivado). Esto garantiza que ningún empleado activo
+ * quede huérfano o invisible si su jefe es archivado.
+ */
+export function rootEmployees(state: State): Employee[] {
+  const activeIds = new Set(activeEmployees(state).map((e) => e.id));
+  return activeEmployees(state)
+    .filter((e) => !e.managerId || !activeIds.has(e.managerId))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
 export function employeeById(state: State, employeeId: string): Employee | undefined {
   return state.employees.get(employeeId);
 }

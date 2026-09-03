@@ -8,6 +8,7 @@ import {
   generateId,
   monthKeyOf,
   payrollRunsInMonth,
+  rootEmployees,
   toDecimalString,
   toIsoDate,
   validateEmployeeDraft,
@@ -244,10 +245,8 @@ export class PayrollView extends ItemView {
     for (const children of byManager.values()) children.sort((a, b) => a.name.localeCompare(b.name));
 
     // Raíz = sin jefe, o con jefe que ya no está activo (archivado/inexistente):
-    // el subordinado queda visible en lugar de perderse en el organigrama.
-    const roots = employees
-      .filter((e) => !e.managerId || !byManager.has(e.managerId))
-      .sort((a, b) => a.name.localeCompare(b.name));
+    // el subordinado queda visible como raíz en lugar de perderse en el organigrama.
+    const roots = rootEmployees(this.host.state);
 
     const list = el.createDiv({ cls: "octa-orgchart" });
     for (const root of roots) this.renderOrgNode(list, root, byManager, 0);
