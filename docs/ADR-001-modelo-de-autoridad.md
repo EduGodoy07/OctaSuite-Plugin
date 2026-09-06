@@ -155,3 +155,17 @@ correr `npm run deploy` como último paso de cualquier cambio visible en la UI.
 De paso quedó sin escribir el CSS del punto de venta (`octa-pos-item`,
 `octa-cart-row`, `octa-filter-chip`, etc.) — la vista de Caja habría abierto
 sin estilo. Se agregó al cerrar este incidente.
+
+**Resolución verificada (2026-09-04):** las tres clases del incidente ya
+existen y se estilan (`styles.css:629-735`: `.octa-pos`, `.octa-pos-grid`,
+`.octa-pos-item`, `.octa-pos-item-name`, `.octa-pos-item-price`,
+`.octa-pos-cart`, `.octa-cart-row`, `.octa-cart-main`, `.octa-cart-controls`,
+`.octa-cart-actions`, `.octa-filter-chip`), consumidas por
+`register-view.ts:258-373`. La verificación reveló además un gap transversal
+que el incidente no capturó: `octa-num` (cifras de caja/carrito/factura/nómina)
+solo tenía definición dentro de tablas (`.octa-table .octa-num`, `styles.css:252`);
+se agregó la variante global `.octa-num { font-variant-numeric: tabular-nums; }`
+(`styles.css:1099`) para alinear las cifras fuera de tablas (`octa-total-row`,
+`octa-cart-row`, resumen de caja). No contradice la regla de tabla (especificidad
+superior la complementa). Deploy verificado en el vault
+(`.obsidian/plugins/octasuite-lite/styles.css:1099`).

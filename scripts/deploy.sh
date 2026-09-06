@@ -16,9 +16,9 @@ fi
 npm --prefix "$ROOT" run build
 
 mkdir -p "$DEST"
-cp "$ROOT/main.js" "$DEST/"
-cp "$ROOT/manifest.json" "$DEST/"
-cp "$ROOT/styles.css" "$DEST/"
+cp "$ROOT/packages/obsidian-plugin/main.js" "$DEST/"
+cp "$ROOT/packages/obsidian-plugin/manifest.json" "$DEST/"
+cp "$ROOT/packages/obsidian-plugin/styles.css" "$DEST/"
 
 echo "Instalado en: $DEST"
 echo "En Obsidian: Cmd+R para recargar, o Configuracion -> Plugins de la comunidad."
