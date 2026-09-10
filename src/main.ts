@@ -442,14 +442,14 @@ export default class OctaSuitePlugin extends Plugin implements PluginHost {
   }
 
   /** Agrega el hecho al journal y lo aplica al estado en memoria. */
-  async commit(event: AnyEvent, options: { silent?: boolean } = {}): Promise<boolean> {
+  async commit(event: AnyEvent, options: { silent?: boolean; companyId?: string } = {}): Promise<boolean> {
     const rejection = apply(this.state, event);
     if (rejection) {
       new Notice(`OctaSuite: ${rejection.reason}`);
       return false;
     }
     try {
-      await this.journal.append(event);
+      await this.journal.append(event, options.companyId);
     } catch (error) {
       console.error("[OctaSuite] no se pudo escribir el journal", error);
       new Notice("OctaSuite: el cambio NO se guardó en disco. Revisa la consola.");

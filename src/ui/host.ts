@@ -41,6 +41,6 @@ export interface PluginHost {
   /** Lleva la vista del panel lateral al área principal. */
   expandToMain(viewType: string): void;
   openModule(mod: ModuleDef): void;
-  commit(event: AnyEvent, options?: { silent?: boolean }): Promise<boolean>;
+  commit(event: AnyEvent, options?: { silent?: boolean; companyId?: string }): Promise<boolean>;
   newEvent<T extends AnyEvent["type"]>(type: T, payload: unknown): AnyEvent;
 }

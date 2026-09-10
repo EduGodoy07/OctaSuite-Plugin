@@ -39,6 +39,7 @@ export const INVENTORY_VIEW_TYPE = "octasuite-inventory";
 export const TASKS_VIEW_TYPE = "octasuite-tasks";
 export const LAUNCHER_VIEW_TYPE = "octasuite-launcher";
 export const REGISTER_VIEW_TYPE = "octasuite-register";
+export const CREDIT_NOTES_VIEW_TYPE = "octasuite-credit-notes";
 export const SETTINGS_MODULE_ID = "configuracion";
 
 /** Todas las vistas del plugin comparten prefijo, para poder barrer las viejas. */

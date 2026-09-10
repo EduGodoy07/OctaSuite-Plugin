@@ -214,6 +214,15 @@ export class InvoicesView extends ItemView {
   }
 
   private openCreditNote(invoice: Invoice): void {
+    // Buscar en qué empresa está la factura para escribir la nota en la partición correcta
+    let invoiceCompanyId = this.host.activeCompanyIds[0];
+    for (const [companyId, state] of this.host.statesByCompany) {
+      if (state.invoices.has(invoice.id)) {
+        invoiceCompanyId = companyId;
+        break;
+      }
+    }
+
     new CreditNoteModal(this.app, {
       invoice,
       locale: this.host.settings.locale,
@@ -234,6 +243,7 @@ export class InvoicesView extends ItemView {
             exchangeLines,
             stockReturnLocationId,
           }),
+          { companyId: invoiceCompanyId },
         );
         if (ok) new Notice(`Nota de crédito (${type ?? "store_credit"}) emitida sobre ${invoice.displayNumber}`);
       },
