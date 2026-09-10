@@ -45,6 +45,7 @@ import {
   STATUS_LABEL,
   TASKS_VIEW_TYPE,
   VIEW_TYPE_PREFIX,
+  isOctaSuiteViewType,
   type ModuleDef,
 } from "./modules.js";
 import { DEFAULT_SETTINGS, type OctaSuiteSettings } from "./settings.js";
@@ -477,7 +478,7 @@ export default class OctaSuitePlugin extends Plugin implements PluginHost {
       // Por prefijo y no por lista exacta: cualquier vista octasuite-* (incluidas
       // de versiones anteriores o con divergencia de constante) se reutiliza en
       // lugar de abrir una pestaña nueva al navegar.
-      if (leaf.getViewState().type.startsWith(VIEW_TYPE_PREFIX)) leaves.push(leaf);
+      if (isOctaSuiteViewType(leaf.getViewState().type)) leaves.push(leaf);
     });
     return leaves;
   }

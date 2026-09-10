@@ -44,6 +44,16 @@ export const SETTINGS_MODULE_ID = "configuracion";
 /** Todas las vistas del plugin comparten prefijo, para poder barrer las viejas. */
 export const VIEW_TYPE_PREFIX = "octasuite-";
 
+/**
+ * Detecta si un tipo de vista pertenece a OctaSuite por prefijo (y no por lista
+ * exacta). Cualquier vista `octasuite-*` — vigente, legacy o de una constante
+ * divergida de versiones anteriores — se reutiliza al navegar en lugar de abrir
+ * una pestaña nueva. Testeado en `tests/modules.test.ts` (regresión 2026-09-09).
+ */
+export function isOctaSuiteViewType(viewType: string): boolean {
+  return viewType.startsWith(VIEW_TYPE_PREFIX);
+}
+
 /** Tipos de vista vigentes. Cualquier otro con el prefijo es de una versión anterior. */
 export const KNOWN_VIEW_TYPES: readonly string[] = [
   LAUNCHER_VIEW_TYPE,

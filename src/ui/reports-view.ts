@@ -13,13 +13,14 @@ import {
   seriesGaps,
   toIsoDate,
 } from "@octasuite/core";
-import { ItemView, WorkspaceLeaf } from "obsidian";
+import { ItemView, Notice, TFile, WorkspaceLeaf } from "obsidian";
 import { REPORTS_VIEW_TYPE } from "../modules.js";
 import { DEFAULT_COMPANY_ID } from "../storage/vault-journal.js";
 import { companyLabel } from "./company-switcher.js";
 import type { PluginHost } from "./host.js";
 import { donut, groupedBars, monthHeatmap } from "./charts.js";
 import { moduleHeader } from "./nav.js";
+import { reportCsv, reportMarkdown, type ReportInput } from "./report-export.js";
 
 /**
  * Reportes del período. La estructura de bloques —resumen, categorías, formas de
@@ -73,6 +74,11 @@ export class ReportsView extends ItemView {
     nav.createEl("button", { text: "◀" }).onclick = () => this.shiftMonth(-1);
     nav.createSpan({ text: this.month, cls: "octa-mono" });
     nav.createEl("button", { text: "▶" }).onclick = () => this.shiftMonth(1);
+    nav.createSpan({ text: "|", cls: "octa-mono" });
+    nav.createEl("button", { text: "MD", title: "Exportar reporte Markdown (imprimible a PDF desde Obsidian)" }).onclick = () =>
+      void this.exportReport("md");
+    nav.createEl("button", { text: "CSV", title: "Exportar tablas a CSV para hoja de cálculo" }).onclick = () =>
+      void this.exportReport("csv");
 
     const facturado = consolidatedTotalInvoiced(states, this.month, currency);
     const gastos = consolidatedTotalExpenses(states, this.month, currency);
@@ -216,6 +222,91 @@ export class ReportsView extends ItemView {
     const d = new Date(y, m - 1 + delta, 1);
     this.month = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
     this.render();
+  }
+
+  /**
+   * Export offline (B-04): misma consolidación que render(), serializada a
+   * Markdown o CSV y escrita al vault en {dataFolder}/reports/. Reutiliza el
+   * patrón del repo (vault.create para nuevo, vault.modify si ya existe) para
+   * no duplicar pestañas del mismo mes y que Obsidian indexe el archivo.
+   */
+  private async exportReport(kind: "md" | "csv"): Promise<void> {
+    const { state, settings } = this.host;
+    const currency = settings.currency;
+    const locale = settings.locale;
+    const states = [...this.host.statesByCompany.values()];
+    const formatMoney = (minor: number) => format({ minor, currency }, locale);
+
+    const facturado = consolidatedTotalInvoiced(states, this.month, currency);
+    const gastos = consolidatedTotalExpenses(states, this.month, currency);
+    const porCobrar = consolidatedUnpaid(states, this.month, currency);
+    const descuentos = consolidatedDiscountSummary(states, this.month, currency);
+    const mix = consolidatedPaymentMix(states, this.month, currency);
+    const customers = consolidatedCustomerMetrics(states, this.month, currency);
+    const gaps = seriesGaps(state, settings.invoiceSeries);
+
+    const input: ReportInput = {
+      month: this.month,
+      currency,
+      locale,
+      companies: this.host.activeCompanyIds.map(companyLabel),
+      kpis: [
+        { label: "Facturado", value: format(facturado, locale) },
+        { label: "Gastos", value: format(gastos, locale) },
+        {
+          label: "Diferencia",
+          value: format({ minor: facturado.minor - gastos.minor, currency }, locale),
+        },
+        { label: "Por cobrar", value: format(porCobrar.amount, locale), hint: `${porCobrar.count} factura(s)` },
+        {
+          label: "Descuentos",
+          value: descuentos.documents === 0 ? "—" : format(descuentos.total, locale),
+          hint: descuentos.documents === 0 ? "sin descuentos en el período" : `${descuentos.documents} factura(s)`,
+        },
+      ],
+      trend: consolidatedMonthlySeries(states, this.month, 12, currency).map((p) => ({
+        line: p.month,
+        invoiced: format(p.invoiced, locale),
+        expenses: format(p.expenses, locale),
+      })),
+      byCategory: consolidatedExpensesByCategory(states, this.month, currency).map((c) => ({
+        name: c.name,
+        amount: format(c.amount, locale),
+      })),
+      paymentMix: mix.slices.map((s) => ({
+        method: s.method,
+        amount: format(s.amount, locale),
+        sharePct: `${Math.round(s.share * 100)}%`,
+      })),
+      customers: {
+        tickets: String(customers.tickets),
+        identified: String(customers.identified),
+        returning: customers.returningRate === null ? "—" : `${Math.round(customers.returningRate * 100)}%`,
+        avgTicket: format(customers.avgTicket, locale),
+      },
+      daily: consolidatedDailyExpenses(states, this.month, currency).map((d) => ({
+        date: d.date,
+        amount: format(d.amount, locale),
+      })),
+      gaps,
+    };
+
+    const content = kind === "md" ? reportMarkdown(input) : reportCsv(input);
+    const folder = `${settings.dataFolder}/reports`;
+    const path = `${folder}/${kind === "md" ? `reporte-${this.month}.md` : `tablas-${this.month}.csv`}`;
+
+    try {
+      await this.app.vault.createFolder(folder);
+    } catch {
+      // Ya existe: la carpeta de reportes es reutilizable.
+    }
+    const existing = this.app.vault.getAbstractFileByPath(path);
+    if (existing instanceof TFile) {
+      await this.app.vault.modify(existing, content);
+    } else {
+      await this.app.vault.create(path, content);
+    }
+    new Notice(`Reporte exportado a ${path}`, 5000);
   }
 
   override onClose(): Promise<void> {
