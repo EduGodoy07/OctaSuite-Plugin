@@ -217,17 +217,25 @@ export class InvoicesView extends ItemView {
     new CreditNoteModal(this.app, {
       invoice,
       locale: this.host.settings.locale,
-      onSubmit: async ({ amount, reason, date }) => {
+      products: this.host.state.products,
+      locations: this.host.state.locations,
+      onSubmit: async ({ amount, reason, date, type, tenderMethod, returnLines, exchangeLines, stockReturnLocationId }) => {
+        const creditNoteId = generateId("ncr");
         const ok = await this.host.commit(
-          this.host.newEvent("invoice.credited", {
-            creditNoteId: generateId("ncr"),
+          this.host.newEvent("invoice.refunded", {
+            creditNoteId,
             invoiceId: invoice.id,
             date,
             amount,
             reason,
+            type: type ?? "store_credit",
+            tenderRefund: tenderMethod ? { method: tenderMethod, amount } : undefined,
+            lines: returnLines,
+            exchangeLines,
+            stockReturnLocationId,
           }),
         );
-        if (ok) new Notice(`Nota de crédito emitida sobre ${invoice.displayNumber}`);
+        if (ok) new Notice(`Nota de crédito (${type ?? "store_credit"}) emitida sobre ${invoice.displayNumber}`);
       },
     }).open();
   }

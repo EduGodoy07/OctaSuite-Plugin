@@ -12,11 +12,17 @@ import {
 import { canTransition, type Expense, type ExpenseStatus } from "./domain/expense.js";
 import {
   assertCreditable,
+  assertRefundable,
   computeInvoiceTotals,
+  type CreditNoteType,
+  type ExchangeLine,
   formatInvoiceNumber,
   lineDiscountAmount,
+  type TenderRefund,
   type CreditNote,
+  type CreditNoteDraft,
   type Invoice,
+  validateCreditNoteDraft,
 } from "./domain/invoice.js";
 import {
   PRIMARY_LOCATION_ID,
@@ -48,6 +54,7 @@ import { isCashMethod, type CashMovement, type Shift, type ShiftSummary } from "
 import { explodeLine, isKit, type Receipt, type StockAdjustment } from "./domain/stock.js";
 import { DomainError } from "./errors.js";
 import type { AnyEvent } from "./events.js";
+import { generateId } from "./ids.js";
 import { add, format, subtract, sum, zero, type CurrencyCode, type Money } from "./money.js";
 
 export interface Category {
@@ -461,6 +468,136 @@ export function apply(state: State, event: AnyEvent): RejectedEvent | null {
         creditedTotal: add(current.creditedTotal, p.amount),
         creditNoteIds: [...current.creditNoteIds, p.creditNoteId],
       });
+      return null;
+    }
+    case "invoice.refunded": {
+      const p = event.payload;
+      const current = state.invoices.get(p.invoiceId);
+      if (!current) return reject("not_found", `Factura inexistente: ${p.invoiceId}`);
+      if (state.creditNotes.has(p.creditNoteId)) return reject("duplicate", `La nota ${p.creditNoteId} ya existe`);
+
+      // Validar draft extendido
+      const draft: CreditNoteDraft = {
+        type: p.type,
+        amount: p.amount,
+        reason: p.reason,
+        lines: p.lines,
+        tenderRefund: p.tenderRefund,
+        stockReturnLocationId: p.stockReturnLocationId,
+        exchangeLines: p.exchangeLines,
+      };
+      const problems = validateCreditNoteDraft(draft);
+      if (problems.length > 0) {
+        return reject(problems[0]!.code, problems[0]!.message);
+      }
+
+      try {
+        assertRefundable(current, p.amount);
+      } catch (e) {
+        if (e instanceof DomainError) return reject(e.code, e.message);
+        throw e;
+      }
+
+      // Guardar credit note extendida (campos nuevos en objeto plano)
+      const creditNote: CreditNote & {
+        type?: CreditNoteType;
+        lines?: typeof p.lines;
+        tenderRefund?: TenderRefund;
+        stockReturnLocationId?: string;
+        exchangeLines?: typeof p.exchangeLines;
+      } = {
+        id: p.creditNoteId,
+        invoiceId: p.invoiceId,
+        date: p.date,
+        amount: p.amount,
+        reason: p.reason,
+        createdAt: event.at,
+        type: p.type,
+        lines: p.lines,
+        tenderRefund: p.tenderRefund,
+        stockReturnLocationId: p.stockReturnLocationId,
+        exchangeLines: p.exchangeLines,
+      };
+      state.creditNotes.set(p.creditNoteId, creditNote);
+      state.invoices.set(current.id, {
+        ...current,
+        creditedTotal: add(current.creditedTotal, p.amount),
+        creditNoteIds: [...current.creditNoteIds, p.creditNoteId],
+      });
+
+// 1) Stock return: si hay líneas devueltas, crear ajuste/traslado a ubicación
+      if (p.lines && p.lines.length > 0) {
+        const locationId = p.stockReturnLocationId ?? PRIMARY_LOCATION_ID;
+        for (const line of p.lines) {
+          state.adjustments.set(generateId("adj"), {
+            id: generateId("adj"),
+            date: p.date,
+            productId: line.productId,
+            quantity: line.quantity,
+            reason: "Devolución de cliente",
+            createdAt: event.at,
+          });
+        }
+      }
+
+      // 2) Tender refund: asiento contable doble partida (Caja/Banco -> Clientes)
+      if (p.tenderRefund) {
+        const tenderAccount = findTenderAccount(state, p.tenderRefund.method);
+        const arAccount = findARAccount(state);
+        if (tenderAccount && arAccount) {
+          const entry: JournalEntry = {
+            id: generateId("je"),
+            date: p.date,
+            description: `Reembolso ${p.tenderRefund.method} por nota ${p.creditNoteId}`,
+            reference: p.creditNoteId,
+            lines: [
+              { accountId: tenderAccount.id, debit: p.tenderRefund.amount, credit: zero(p.tenderRefund.amount.currency), description: `Salida ${p.tenderRefund.method}` },
+              { accountId: arAccount.id, debit: zero(p.tenderRefund.amount.currency), credit: p.tenderRefund.amount, description: `Reducción clientes por devolución` },
+            ],
+            status: "posted",
+            postedAt: event.at,
+            createdAt: event.at,
+          };
+          if (!isBalanced(entry, p.tenderRefund.amount.currency)) {
+            return reject("unbalanced_entry", "El asiento de reembolso no cuadra");
+          }
+          state.journalEntries.set(entry.id, entry);
+        }
+      }
+
+      // 3) Store credit: abono a cuenta de crédito del cliente
+      if (p.type === "store_credit" || !p.type) {
+        const creditAccount = creditAccountByPartner(state, current.partnerId ?? "");
+        const accountId = creditAccount?.id ?? generateId("cra");
+        state.creditAccounts.set(accountId, {
+          ...creditAccount,
+          id: accountId,
+          partnerId: current.partnerId ?? "",
+          partnerName: current.partnerName,
+          balances: new Map(creditAccount?.balances ?? []).set(
+            p.amount.currency,
+            add(creditAccount?.balances.get(p.amount.currency) ?? zero(p.amount.currency), p.amount),
+          ),
+          createdAt: creditAccount?.createdAt ?? event.at,
+          updatedAt: event.at,
+        });
+        state.creditTransactions.set(generateId("crt"), {
+          id: generateId("crt"),
+          accountId,
+          type: "added",
+          amount: p.amount,
+          reference: p.creditNoteId,
+          note: p.reason,
+          createdAt: event.at,
+        });
+      }
+
+      // 4) Exchange: líneas de cambio (productos nuevos) - crear factura vinculada o nota
+      if (p.exchangeLines && p.exchangeLines.length > 0) {
+        // Por ahora: registrar como líneas de exchange en la nota; no genera factura automática
+        // (requeriría flujo de emisión nuevo; se deja como dato para UI)
+      }
+
       return null;
     }
 
@@ -1744,4 +1881,23 @@ export function rateFor(
     if (!best || r.date > best.date || (r.date === best.date && r.createdAt >= best.createdAt)) best = r;
   }
   return best;
+}
+
+/** Busca la cuenta contable asociada a un método de pago (tender). */
+function findTenderAccount(state: State, method: string): Account | undefined {
+  const methodLower = method.toLowerCase();
+  for (const acc of state.accounts.values()) {
+    const nameLower = acc.name.toLowerCase();
+    if (methodLower.includes("efectiv") && (nameLower.includes("caja") || nameLower.includes("efectiv"))) return acc;
+    if (methodLower.includes("tarjet") && nameLower.includes("banco")) return acc;
+    if (methodLower.includes("transfer") && nameLower.includes("banco")) return acc;
+    if (methodLower.includes("credito") && acc.type === "activo" && nameLower.includes("cobrar")) return acc;
+  }
+  // Fallback: primera cuenta de activo
+  return [...state.accounts.values()].find((a) => a.type === "activo");
+}
+
+/** Busca la cuenta de Cuentas por Cobrar (activo). */
+function findARAccount(state: State): Account | undefined {
+  return [...state.accounts.values()].find((a) => a.code === "1200" || (a.type === "activo" && a.name.toLowerCase().includes("cobrar")));
 }

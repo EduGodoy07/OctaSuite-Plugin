@@ -1,7 +1,7 @@
 import type { IsoDate, IsoInstant, MonthKey } from "./dates.js";
 import type { AccountDraft, LedgerAccountType, JournalLine, JournalStatus } from "./domain/accounting.js";
 import type { ExpenseDraft, ExpenseStatus } from "./domain/expense.js";
-import type { InvoiceLine, TotalsSnapshot } from "./domain/invoice.js";
+import type { InvoiceLine, TotalsSnapshot, CreditNoteType, TenderRefund, ExchangeLine } from "./domain/invoice.js";
 import type { LocationDraft, StockTransferLine } from "./domain/inventory.js";
 import type { LeadDraft, Stage, Source, LeadActivity } from "./domain/lead.js";
 import type { PartnerDraft } from "./domain/partner.js";
@@ -101,6 +101,27 @@ export type InvoicePaid = Envelope<
 export type InvoiceCredited = Envelope<
   "invoice.credited",
   { creditNoteId: string; invoiceId: string; date: IsoDate; amount: Money; reason: string }
+>;
+
+/** Nota de crédito extendida (B-05): refund, exchange, store_credit con stock return y tender refund. */
+export type InvoiceRefunded = Envelope<
+  "invoice.refunded",
+  {
+    creditNoteId: string;
+    invoiceId: string;
+    date: IsoDate;
+    amount: Money;
+    reason: string;
+    type: CreditNoteType;
+    /** Líneas devueltas (para retorno de stock). */
+    lines?: readonly { productId: string; quantity: number; unitPrice: Money; taxRate: number }[];
+    /** Reembolso al tender original. */
+    tenderRefund?: TenderRefund;
+    /** Ubicación destino del stock devuelto. */
+    stockReturnLocationId?: string;
+    /** Líneas de cambio (productos nuevos). */
+    exchangeLines?: readonly ExchangeLine[];
+  }
 >;
 
 // ── CRM ──────────────────────────────────────────────────────────────
@@ -304,6 +325,7 @@ export type AnyEvent =
   | InvoiceIssued
   | InvoicePaid
   | InvoiceCredited
+  | InvoiceRefunded
   | LeadCreated
   | LeadUpdated
   | LeadStageChanged
@@ -359,6 +381,7 @@ const EVENT_TYPES: readonly string[] = [
   "invoice.issued",
   "invoice.paid",
   "invoice.credited",
+  "invoice.refunded",
   "lead.created",
   "lead.updated",
   "lead.stage_changed",
