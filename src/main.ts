@@ -55,6 +55,7 @@ import {
   sameActiveCompanyIds,
 } from "./company-selection.js";
 import { VaultCatalogs } from "./storage/vault-catalogs.js";
+import { VaultPricelists } from "./storage/vault-pricelists.js";
 import { VaultTasks } from "./storage/task-store.js";
 import { DEFAULT_COMPANY_ID, VaultJournal } from "./storage/vault-journal.js";
 import { ExpensesView } from "./ui/expenses-view.js";
@@ -150,6 +151,22 @@ export default class OctaSuitePlugin extends Plugin implements PluginHost {
       this.catalogsFolder = this.settings.dataFolder;
     }
     return this.catalogsInstance;
+  }
+
+  private pricelistsFolder = "";
+  private pricelistsInstance: VaultPricelists | null = null;
+
+  /**
+   * Instancia unica del catalogo de listas de precios del vault (B-03): el
+   * gestor (modal) escribe y las facturas leen la misma instancia. Mismo
+   * patron de `catalogs`: se recrea si cambia la carpeta configurada.
+   */
+  get pricelists(): VaultPricelists {
+    if (!this.pricelistsInstance || this.pricelistsFolder !== this.settings.dataFolder) {
+      this.pricelistsInstance = new VaultPricelists(this.settings.dataFolder, this.app.vault.adapter);
+      this.pricelistsFolder = this.settings.dataFolder;
+    }
+    return this.pricelistsInstance;
   }
 
   private tasksFolder = "";

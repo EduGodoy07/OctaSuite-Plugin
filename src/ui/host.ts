@@ -2,6 +2,7 @@ import type { AnyEvent, ParseResult, RejectedEvent, State } from "@octasuite/cor
 import type { OctaSuiteSettings } from "../settings.js";
 import type { ModuleDef } from "../modules.js";
 import type { VaultCatalogs } from "../storage/vault-catalogs.js";
+import type { VaultPricelists } from "../storage/vault-pricelists.js";
 import type { VaultTasks } from "../storage/task-store.js";
 
 /**
@@ -18,6 +19,8 @@ export interface PluginHost {
   readonly settings: OctaSuiteSettings;
   /** Instancia unica de los catalogos del vault (load + saveUom la comparten). */
   readonly catalogs: VaultCatalogs;
+  /** Instancia unica de las listas de precios del vault (B-03). */
+  readonly pricelists: VaultPricelists;
   /** Instancia unica de las tareas por archivos del vault. */
   readonly tasks: VaultTasks;
   readonly rejectedCount: number;

@@ -1,5 +1,6 @@
 import {
   activeProducts,
+  applyPricelist,
   computeInvoiceTotals,
   choicesFor,
   computeLineTotals,
@@ -20,6 +21,7 @@ import {
   type Money,
   type OptionSelection,
   type Partner,
+  type Pricelist,
   type Product,
   type State,
 } from "@octasuite/core";
@@ -44,6 +46,10 @@ interface DraftLine {
 
 export class InvoiceEditorModal extends Modal {
   private selectedPartner: Partner | undefined;
+  /** Lista de precios del cliente actual (se re-resuelve al cambiar cliente). */
+  private selectedPricelist: Pricelist | undefined;
+  /** Catálogo completo, cacheado al abrir para no leer el archivo por cambio de cliente. */
+  private pricelists: Pricelist[] = [];
   private date = toIsoDate(new Date());
   private notes = "";
   private lines: DraftLine[] = [];
@@ -82,6 +88,13 @@ export class InvoiceEditorModal extends Modal {
   }
 
   override onOpen(): void {
+    void (async () => {
+      this.pricelists = await this.options.host.pricelists.load();
+      this.render();
+    })();
+  }
+
+  private render(): void {
     const { contentEl, modalEl } = this;
     modalEl.addClass("octa-wide-modal");
     contentEl.empty();
@@ -96,7 +109,13 @@ export class InvoiceEditorModal extends Modal {
       this.options.host,
       contentEl.createDiv(),
       this.selectedPartner?.id,
-      (partner) => (this.selectedPartner = partner),
+      (partner) => {
+        this.selectedPartner = partner;
+        this.selectedPricelist = this.applyPricelistFor(partner);
+        this.repriceUntouchedLines();
+        this.renderLines();
+        this.renderTotals();
+      },
     ).render();
 
     new Setting(contentEl).setName("Fecha").addText((t) => {
@@ -166,8 +185,9 @@ export class InvoiceEditorModal extends Modal {
       if (product) {
         // Se copian los datos del producto a la línea; a partir de acá la línea
         // es independiente, porque el documento congela lo que se facturó.
+        // El precio sugerido sale de la lista de precios del cliente, si tiene.
         line.description = product.name;
-        line.unitPriceRaw = toDecimalString(product.salePrice);
+        line.unitPriceRaw = toDecimalString(this.priceForSelection(product));
         line.taxRateRaw = String(product.taxRate ?? this.options.defaultTaxRate);
         // Un configurable abre tantos selectores como unidades pida cada opción.
         for (const option of product.options ?? []) {
@@ -206,6 +226,33 @@ export class InvoiceEditorModal extends Modal {
     };
 
     this.picksRow(row, line, products);
+  }
+
+  /** Lista de precios que aplica a un cliente, según su `pricelistId`. */
+  private applyPricelistFor(partner: Partner | undefined): Pricelist | undefined {
+    if (!partner?.pricelistId) return undefined;
+    return this.pricelists.find((pl) => pl.id === partner.pricelistId);
+  }
+
+  /** Precio sugerido al elegir un producto: la lista del cliente si aplica, si no el de lista. */
+  private priceForSelection(product: Product): Money {
+    if (!this.selectedPricelist) return product.salePrice;
+    return applyPricelist(this.selectedPricelist, { id: product.id, salePrice: product.salePrice });
+  }
+
+  /**
+   * Al cambiar de cliente, re-resuelve solo las líneas que nunca se tocaron a
+   * mano (su precio es todavía el precio de lista del producto): las que el
+   * usuario editó se respetan, porque el documento debe congelar lo que se vio.
+   */
+  private repriceUntouchedLines(): void {
+    for (const line of this.lines) {
+      if (!line.productId) continue;
+      const product = this.options.state.products.get(line.productId);
+      if (!product) continue;
+      if (line.unitPriceRaw !== toDecimalString(product.salePrice)) continue;
+      line.unitPriceRaw = toDecimalString(this.priceForSelection(product));
+    }
   }
 
   /** Selectores de opciones, en una fila propia debajo de la línea. */

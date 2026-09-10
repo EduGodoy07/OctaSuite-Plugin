@@ -23,6 +23,8 @@ export interface Partner {
   readonly reference?: string;
   /** Contacto o direccion perteneciente a otro partner (jerarquia `parent_id` del ERP). */
   readonly parentId?: string;
+  /** Lista de precios asignada (dual pricing B-03); `applyPricelist` al facturar. */
+  readonly pricelistId?: string;
   readonly notes?: string;
   readonly archived: boolean;
   readonly createdAt: string;
@@ -45,6 +47,7 @@ export interface PartnerDraft {
   readonly jobTitle?: string;
   readonly reference?: string;
   readonly parentId?: string;
+  readonly pricelistId?: string;
   readonly notes?: string;
 }
 

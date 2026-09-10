@@ -12,6 +12,7 @@ export * from "./domain/accounting.js";
 export * from "./domain/expense.js";
 export * from "./domain/partner.js";
 export * from "./domain/product.js";
+export * from "./domain/pricelist.js";
 export * from "./domain/register.js";
 export * from "./domain/stock.js";
 export * from "./domain/invoice.js";

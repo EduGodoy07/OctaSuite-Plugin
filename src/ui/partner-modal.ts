@@ -5,8 +5,10 @@ import {
   type AccountType,
   type Partner,
   type PartnerDraft,
+  type Pricelist,
 } from "@octasuite/core";
 import { App, Modal, Setting } from "obsidian";
+import type { PluginHost } from "./host.js";
 
 const TYPE_LABEL: Record<AccountType, string> = {
   individual: "Persona",
@@ -25,16 +27,20 @@ type Editable = {
   street1: string;
   city: string;
   parentId: string;
+  pricelistId: string;
   notes: string;
 };
 
 export class PartnerModal extends Modal {
   private form: Editable;
   private errorsEl!: HTMLElement;
+  private pricelists: Pricelist[] = [];
 
   constructor(
     app: App,
     private readonly options: {
+      /** Interfaz de servicios del plugin: solo para leer el catálogo de listas de precios. */
+      readonly host: PluginHost;
       /** Contacto a editar. Si falta, es creación. */
       readonly existing?: Partner;
       /**
@@ -60,11 +66,19 @@ export class PartnerModal extends Modal {
       street1: e?.street1 ?? "",
       city: e?.city ?? "",
       parentId: e?.parentId ?? "",
+      pricelistId: e?.pricelistId ?? "",
       notes: e?.notes ?? "",
     };
   }
 
-  override onOpen(): void {
+  override async onOpen(): Promise<void> {
+    if (this.pricelists.length === 0) {
+      this.pricelists = await this.options.host.pricelists.load();
+    }
+    this.render();
+  }
+
+  private render(): void {
     const { contentEl } = this;
     contentEl.empty();
     contentEl.addClass("octa");
@@ -107,6 +121,15 @@ export class PartnerModal extends Modal {
             const trimmed = v.trim();
             t.inputEl.toggleClass("octa-input-invalid", trimmed !== "" && !isValidNit(trimmed));
           });
+        });
+
+      new Setting(contentEl)
+        .setName("Lista de precios")
+        .setDesc("Al facturarle, el precio de venta se ajusta a esta lista (Productos → Precios).")
+        .addDropdown((d) => {
+          d.addOption("", "— precio de lista —");
+          for (const pl of this.pricelists) d.addOption(pl.id, pl.name);
+          d.setValue(this.form.pricelistId).onChange((v) => (this.form.pricelistId = v));
         });
     }
 
@@ -159,6 +182,7 @@ export class PartnerModal extends Modal {
       ...(clean(this.form.street1) ? { street1: this.form.street1.trim() } : {}),
       ...(clean(this.form.city) ? { city: this.form.city.trim() } : {}),
       ...(clean(this.form.parentId) ? { parentId: this.form.parentId.trim() } : {}),
+      ...(clean(this.form.pricelistId) ? { pricelistId: this.form.pricelistId.trim() } : {}),
       ...(clean(this.form.notes) ? { notes: this.form.notes.trim() } : {}),
     };
   }
