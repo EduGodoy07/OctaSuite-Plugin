@@ -151,3 +151,34 @@ export function reportCsv(input: ReportInput): string {
 
   return parts.join("\n\n") + "\n";
 }
+
+/** Interfaz mínima del vault que usa writeReportToVault (para testabilidad). */
+export interface MinimalVault {
+  createFolder(path: string): Promise<unknown>;
+  getAbstractFileByPath(path: string): { path: string } | null;
+  modify(file: { path: string }, content: string): Promise<unknown>;
+  create(path: string, content: string): Promise<unknown>;
+}
+
+/**
+ * Escribe un reporte (Markdown o CSV) al vault en la carpeta de reportes.
+ * - Si el archivo ya existe: usa `modify`.
+ * - Si no existe: usa `create`.
+ * - Crea la carpeta si no existe (idempotente).
+ * Función pura para testabilidad; la vista llama a esto.
+ */
+export async function writeReportToVault(
+  vault: MinimalVault,
+  folder: string,
+  filename: string,
+  content: string,
+): Promise<void> {
+  const fullPath = `${folder}/${filename}`;
+  await vault.createFolder(folder);
+  const existing = vault.getAbstractFileByPath(fullPath);
+  if (existing && "path" in existing) {
+    await vault.modify(existing, content);
+  } else {
+    await vault.create(fullPath, content);
+  }
+}

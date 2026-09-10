@@ -13,14 +13,14 @@ import {
   seriesGaps,
   toIsoDate,
 } from "@octasuite/core";
-import { ItemView, Notice, TFile, WorkspaceLeaf } from "obsidian";
+import { ItemView, Notice, WorkspaceLeaf } from "obsidian";
 import { REPORTS_VIEW_TYPE } from "../modules.js";
 import { DEFAULT_COMPANY_ID } from "../storage/vault-journal.js";
 import { companyLabel } from "./company-switcher.js";
 import type { PluginHost } from "./host.js";
 import { donut, groupedBars, monthHeatmap } from "./charts.js";
 import { moduleHeader } from "./nav.js";
-import { reportCsv, reportMarkdown, type ReportInput } from "./report-export.js";
+import { reportCsv, reportMarkdown, writeReportToVault, type ReportInput } from "./report-export.js";
 
 /**
  * Reportes del período. La estructura de bloques —resumen, categorías, formas de
@@ -235,7 +235,6 @@ export class ReportsView extends ItemView {
     const currency = settings.currency;
     const locale = settings.locale;
     const states = [...this.host.statesByCompany.values()];
-    const formatMoney = (minor: number) => format({ minor, currency }, locale);
 
     const facturado = consolidatedTotalInvoiced(states, this.month, currency);
     const gastos = consolidatedTotalExpenses(states, this.month, currency);
@@ -295,17 +294,7 @@ export class ReportsView extends ItemView {
     const folder = `${settings.dataFolder}/reports`;
     const path = `${folder}/${kind === "md" ? `reporte-${this.month}.md` : `tablas-${this.month}.csv`}`;
 
-    try {
-      await this.app.vault.createFolder(folder);
-    } catch {
-      // Ya existe: la carpeta de reportes es reutilizable.
-    }
-    const existing = this.app.vault.getAbstractFileByPath(path);
-    if (existing instanceof TFile) {
-      await this.app.vault.modify(existing, content);
-    } else {
-      await this.app.vault.create(path, content);
-    }
+    await writeReportToVault(this.app.vault, folder, path, content);
     new Notice(`Reporte exportado a ${path}`, 5000);
   }
 
