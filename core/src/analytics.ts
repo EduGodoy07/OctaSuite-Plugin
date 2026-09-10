@@ -59,10 +59,12 @@ export interface CustomerMetrics {
 }
 
 /**
- * Un NIT `CF` no identifica a nadie, asi que esos documentos cuentan como
- * tickets pero no como clientes: incluirlos inflaria la tasa de recurrencia.
+ * Clave estable de cliente para agrupar. Un NIT `CF` no identifica a nadie,
+ * asi que esos documentos cuentan como tickets pero no como clientes.
+ * Exportada para que la consolidación multi-empresa agrupe con la misma regla
+ * (mismo NIT comprando en dos empresas = UN solo cliente).
  */
-function customerKey(partnerId: string | undefined, taxId: string): string | null {
+export function customerKey(partnerId: string | undefined, taxId: string): string | null {
   if (partnerId) return `id:${partnerId}`;
   const normalized = taxId.trim().toUpperCase().replace(/[\s-]/g, "");
   if (normalized === "" || normalized === "CF") return null;

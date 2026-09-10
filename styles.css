@@ -26,6 +26,44 @@
   gap: var(--size-4-1);
 }
 
+.octa-company-switch {
+  max-width: 12rem;
+  margin-left: auto;
+  font-size: var(--font-ui-small);
+}
+
+/* Barra derecha de la cabecera de módulos (selector de empresas). */
+.octa-nav-right {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-1);
+  margin-left: auto;
+}
+
+/* Selector multi-empresa: botón que resume la selección y abre el menú. */
+.octa-company-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--size-4-1);
+  font-size: var(--font-ui-small);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  padding: var(--size-4-1) var(--size-4-2);
+  background: var(--background-secondary);
+  color: var(--text-normal);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.octa-company-chip:hover {
+  background: var(--background-modifier-hover);
+}
+
+.octa-company-chip-icon {
+  display: inline-flex;
+  color: var(--text-muted);
+}
+
 .octa-mono {
   font-family: var(--font-monospace);
   font-size: var(--font-ui-small);
@@ -1091,6 +1129,12 @@ circle.octa-hue-5 { stroke: var(--text-faint); background: none; }
 
 .octa-mono {
   font-family: var(--font-monospace);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Cifras tabulares: alinear columnas numéricas (resumen de caja, carrito,
+   IVA, totales, nómina, inventario) sin que los dígitos "bailen" de ancho. */
+.octa-num {
   font-variant-numeric: tabular-nums;
 }
 

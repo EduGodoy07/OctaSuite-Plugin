@@ -163,6 +163,37 @@ export type LoyaltyRewardUpdated = Envelope<
   }
 >;
 
+// ── Crédito de cliente ──────────────────────────────────────────────
+
+export type CreditAdded = Envelope<
+  "credit.added",
+  {
+    accountId: string;
+    partnerId: string;
+    partnerName: string;
+    amount: Money;
+    reference?: string;
+    note?: string;
+  }
+>;
+export type CreditUsed = Envelope<
+  "credit.used",
+  {
+    accountId: string;
+    amount: Money;
+    reference?: string;
+    note?: string;
+  }
+>;
+export type CreditAdjusted = Envelope<
+  "credit.adjusted",
+  {
+    accountId: string;
+    amount: Money;
+    reason?: string;
+  }
+>;
+
 // ── Contabilidad ─────────────────────────────────────────────────────
 
 export type AccountingAccountCreated = Envelope<
@@ -286,6 +317,9 @@ export type AnyEvent =
   | LoyaltyPointsAdjusted
   | LoyaltyRewardCreated
   | LoyaltyRewardUpdated
+  | CreditAdded
+  | CreditUsed
+  | CreditAdjusted
   | CompanyCreated
   | CompanyUpdated
   | CompanyArchived
@@ -338,6 +372,9 @@ const EVENT_TYPES: readonly string[] = [
   "loyalty.points_adjusted",
   "loyalty.reward_created",
   "loyalty.reward_updated",
+  "credit.added",
+  "credit.used",
+  "credit.adjusted",
   "payroll.employee_created",
   "payroll.employee_updated",
   "payroll.employee_archived",

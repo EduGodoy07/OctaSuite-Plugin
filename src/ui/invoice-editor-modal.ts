@@ -16,6 +16,7 @@ import {
   zero,
   type InvoiceLine,
   type IssueInvoiceInput,
+  type LineDiscount,
   type Money,
   type OptionSelection,
   type Partner,
@@ -24,6 +25,7 @@ import {
 } from "@octasuite/core";
 import { App, Modal, setIcon, Setting } from "obsidian";
 import { CustomerPicker } from "./customer-picker.js";
+import { parseDiscountInput } from "./discount-input.js";
 import type { PluginHost } from "./host.js";
 
 /** Línea en edición: los importes viven como texto hasta que se emite. */
@@ -33,6 +35,9 @@ interface DraftLine {
   quantityRaw: string;
   unitPriceRaw: string;
   taxRateRaw: string;
+  /** Descuento: porcentual y/o monto, viven como texto hasta emitir. */
+  discountPercentRaw: string;
+  discountAmountRaw: string;
   /** Una entrada por unidad a elegir: dos carnes son dos entradas. */
   picks: { label: string; productId: string }[];
 }
@@ -70,6 +75,8 @@ export class InvoiceEditorModal extends Modal {
       quantityRaw: "1",
       unitPriceRaw: "",
       taxRateRaw: String(this.options.defaultTaxRate),
+      discountPercentRaw: "",
+      discountAmountRaw: "",
       picks: [],
     };
   }
@@ -135,7 +142,7 @@ export class InvoiceEditorModal extends Modal {
     const wrap = this.linesEl.createDiv({ cls: "octa-table-wrap" });
     const table = wrap.createEl("table", { cls: "octa-table octa-lines" });
     const head = table.createEl("thead").createEl("tr");
-    for (const label of ["Producto", "Descripción", "Cant.", "Precio", "IVA %", "Subtotal", ""]) {
+    for (const label of ["Producto", "Descripción", "Cant.", "Precio", "IVA %", "DTO %", "DTO $", "Subtotal", ""]) {
       head.createEl("th", { text: label });
     }
     const tbody = table.createEl("tbody");
@@ -178,6 +185,8 @@ export class InvoiceEditorModal extends Modal {
     this.cellInput(row, line, "quantityRaw", "1", "decimal", "octa-cell-narrow");
     this.cellInput(row, line, "unitPriceRaw", "0.00", "decimal", "octa-cell-narrow");
     this.cellInput(row, line, "taxRateRaw", "12", "decimal", "octa-cell-narrow");
+    this.cellInput(row, line, "discountPercentRaw", "", "decimal", "octa-cell-narrow");
+    this.cellInput(row, line, "discountAmountRaw", "", "decimal", "octa-cell-narrow");
 
     const subtotal = this.lineSubtotal(line);
     row.createEl("td", {
@@ -207,7 +216,7 @@ export class InvoiceEditorModal extends Modal {
     const tbody = row.parentElement;
     if (!tbody) return;
     const picksRow = tbody.createEl("tr", { cls: "octa-picks-row" });
-    const cell = picksRow.createEl("td", { attr: { colspan: "7" } });
+    const cell = picksRow.createEl("td", { attr: { colspan: "9" } });
     const strip = cell.createDiv({ cls: "octa-picks" });
 
     line.picks.forEach((pick, i) => {
@@ -278,18 +287,38 @@ export class InvoiceEditorModal extends Modal {
     } catch {
       return undefined;
     }
+    const discount = this.parseDiscount(line);
+    if (discount === undefined && this.hasDiscountProblem(line)) return undefined;
     return {
       description: line.description.trim(),
       quantity,
       unitPrice,
       taxRate,
+      ...(discount ? { discount } : {}),
       ...(line.productId ? { productId: line.productId } : {}),
       ...(line.picks.length > 0 ? { selections: groupPicks(line.picks) } : {}),
     };
   }
 
+  /** Descuento de línea: percent y/o amount, según qué campos estén completos. */
+  private parseDiscount(line: DraftLine): LineDiscount | undefined {
+    const result = parseDiscountInput(line.discountPercentRaw, line.discountAmountRaw, this.options.currency);
+    return result.kind === "ok" ? result.discount : undefined;
+  }
+
+  /** True si los campos de descuento de la línea están presentes pero inválidos. */
+  private hasDiscountProblem(line: DraftLine): boolean {
+    return parseDiscountInput(line.discountPercentRaw, line.discountAmountRaw, this.options.currency).kind === "invalid";
+  }
+
   private renderTotals(): void {
     this.totalsEl.empty();
+
+    if (this.lines.some((line) => this.hasDiscountProblem(line))) {
+      this.totalsEl.createDiv({ cls: "octa-subtle", text: "Revisá los descuentos de las líneas." });
+      return;
+    }
+
     const parsed = this.lines.map((l) => this.parseLine(l)).filter((l): l is InvoiceLine => l !== undefined);
 
     if (parsed.length === 0) {
@@ -327,6 +356,10 @@ export class InvoiceEditorModal extends Modal {
 
     const parsed: InvoiceLine[] = [];
     this.lines.forEach((line, index) => {
+      if (this.hasDiscountProblem(line)) {
+        problems.push(`Línea ${index + 1}: descuento inválido`);
+        return;
+      }
       const one = this.parseLine(line);
       if (!one) {
         problems.push(`Línea ${index + 1}: cantidad, precio o IVA incompletos`);

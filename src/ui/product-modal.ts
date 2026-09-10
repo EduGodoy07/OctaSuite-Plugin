@@ -4,8 +4,13 @@ import {
   fromDecimal,
   grossMarginPercent,
   isKit,
+  isKnownUom,
+  listRegisteredUoms,
   markupRatio,
+  resolveUom,
+  suggestUoms,
   toDecimalString,
+  uomCategory,
   validateComponents,
   type ProductOption,
   validateProductDraft,
@@ -13,8 +18,39 @@ import {
   type ProductComponent,
   type ProductDraft,
   type State,
+  type UomEntry,
 } from "@octasuite/core";
-import { App, Modal, setIcon, Setting } from "obsidian";
+import { AbstractInputSuggest, App, Modal, setIcon, Setting } from "obsidian";
+
+/**
+ * Autocomplete del campo «Unidad»: sugiere los nombres de UoM clasicos de
+ * Odoo (el mismo catalogo que OctaSuite seedea en UOMSeeder.php). El campo
+ * sigue siendo de texto libre — el DTE de Guatemala cae en `UNI` si viene
+ * vacio — esto solo evita teclear mal un nombre que ya existe.
+ */
+class UnitInputSuggest extends AbstractInputSuggest<string> {
+  constructor(app: App, inputEl: HTMLInputElement, private readonly onPick: (value: string) => void) {
+    super(app, inputEl);
+  }
+
+  override getSuggestions(query: string): string[] {
+    return suggestUoms(query).map((u) => u.name);
+  }
+
+  override renderSuggestion(value: string, el: HTMLElement): void {
+    el.setText(value);
+    const category = uomCategory(value);
+    if (category) {
+      el.createSpan({ cls: "octa-subtle", text: ` — ${category}` });
+    }
+  }
+
+  override selectSuggestion(value: string): void {
+    this.setValue(value);
+    this.onPick(value);
+    this.close();
+  }
+}
 
 export class ProductModal extends Modal {
   private name: string;
@@ -32,6 +68,8 @@ export class ProductModal extends Modal {
   private marginEl!: HTMLElement;
   private componentsEl!: HTMLElement;
   private optionsEl!: HTMLElement;
+  private unitInputEl!: HTMLInputElement;
+  private unitHintEl!: HTMLElement;
 
   constructor(
     app: App,
@@ -42,6 +80,8 @@ export class ProductModal extends Modal {
       readonly defaultTaxRate: number;
       readonly locale: string;
       readonly onSubmit: (draft: ProductDraft) => Promise<void>;
+      /** Callback opcional para persistir una UoM nueva en el catálogo del vault (uoms.json). */
+      readonly onRegisterUom?: (entry: UomEntry) => Promise<boolean>;
     },
   ) {
     super(app);
@@ -105,9 +145,34 @@ export class ProductModal extends Modal {
       t.setValue(this.taxRateRaw).onChange((v) => (this.taxRateRaw = v)),
     );
 
-    new Setting(contentEl).setName("Unidad").addText((t) =>
-      t.setPlaceholder("unidad, libra, hora").setValue(this.unit).onChange((v) => (this.unit = v)),
-    );
+    new Setting(contentEl)
+      .setName("Unidad")
+      .setDesc("Sugerencias: Units, kg, L, m²… Si escribes un nombre del catálogo se normaliza (ej. «días» → «Dias»).")
+      .addText((t) => {
+        this.unitInputEl = t.inputEl;
+        t.setPlaceholder("unidad, libra, hora").setValue(this.unit).onChange((v) => {
+          this.unit = v;
+          // Normaliza en vivo al nombre canónico cuando la entrada resuelve.
+          const canonical = resolveUom(v);
+          if (v.trim() !== "" && canonical && canonical.name !== v) {
+            this.unit = canonical.name;
+            t.setValue(canonical.name);
+          }
+          // Marca visualmente las entradas libres que NO son UoM del catálogo.
+          const known = v.trim() === "" || isKnownUom(v);
+          t.inputEl.classList.toggle("octa-input-invalid", !known);
+          this.renderUnitHint();
+        });
+        new UnitInputSuggest(this.app, t.inputEl, (value) => {
+          this.unit = value;
+          t.setValue(value);
+          t.inputEl.classList.remove("octa-input-invalid");
+          this.renderUnitHint();
+        });
+      });
+
+    // Hint accionable para UoM no conocidas: permite agregarlas al catálogo del vault (Parte 3).
+    this.unitHintEl = contentEl.createDiv({ cls: "octa-unit-hint" });
 
     new Setting(contentEl).setName("Categoría").addText((t) =>
       t.setPlaceholder("Hot dogs, Combos, Insumos").setValue(this.categoryName).onChange((v) => (this.categoryName = v)),
@@ -393,7 +458,7 @@ export class ProductModal extends Modal {
         ...(costPrice ? { costPrice } : {}),
         ...(Number.isFinite(taxRate) ? { taxRate } : {}),
         ...(this.reference.trim() ? { reference: this.reference.trim() } : {}),
-        ...(this.unit.trim() ? { unit: this.unit.trim() } : {}),
+        ...(this.unit.trim() ? { unit: resolveUom(this.unit)?.name ?? this.unit.trim() } : {}),
         ...(this.categoryName.trim() ? { categoryName: this.categoryName.trim() } : {}),
         ...(this.description.trim() ? { description: this.description.trim() } : {}),
         components,
@@ -410,6 +475,54 @@ export class ProductModal extends Modal {
 
     const list = this.errorsEl.createEl("ul");
     for (const message of problems) list.createEl("li", { text: message });
+  }
+
+  /**
+   * Hint accionable debajo del campo «Unidad»: cuando la entrada no es una UoM
+   * conocida y hay un `onRegisterUom` disponible, ofrece agregarla al catálogo
+   * del vault (uoms.json) eligiendo su categoría. Todo opcional — si el modal
+   * no recibe el callback, el campo sigue siendo texto libre como siempre.
+   */
+  private renderUnitHint(): void {
+    this.unitHintEl.empty();
+    const raw = this.unit.trim();
+    if (raw === "" || isKnownUom(raw) || !this.options.onRegisterUom) return;
+
+    this.unitHintEl.createEl("span", { cls: "octa-subtle", text: `«${raw}» no está en el catálogo de UoM.` });
+    const row = this.unitHintEl.createDiv({ cls: "octa-add-line" });
+    row.createEl("span", { cls: "octa-subtle", text: "Categoría: " });
+    const select = row.createEl("select");
+    // Categorias del catalogo VIGENTE (seed + custom del vault via uoms.json).
+    const categories = [...new Set(listRegisteredUoms().map((u) => u.category))];
+    for (const category of categories) select.createEl("option", { value: category, text: category });
+    const button = row.createEl("button", { text: "Agregar al catálogo" });
+    button.onclick = async () => {
+      button.disabled = true;
+      const entry: UomEntry = { name: raw, category: select.value };
+      let ok = false;
+      try {
+        ok = await this.options.onRegisterUom!(entry);
+      } catch {
+        this.unitHintEl.createEl("span", { cls: "octa-invalid", text: " No se pudo guardar el catálogo." });
+        button.disabled = false;
+        return;
+      }
+      const canonical = resolveUom(raw);
+      this.unitHintEl.empty();
+      // Race guard: si el usuario edito el campo mientras se guardaba, no
+      // pisamos su texto con el nombre canonico de la entrada original.
+      // (El mensaje SIEMPRE usa la entrada enviada — no el estado post-save
+      // del registro, que podria no reflejarla si hubo un desync archivo/memoria.)
+      if (canonical && this.unitInputEl.value.trim() === raw) {
+        this.unit = canonical.name;
+        this.unitInputEl.value = canonical.name;
+        this.unitInputEl.classList.remove("octa-input-invalid");
+      }
+      this.unitHintEl.createEl("span", {
+        cls: "octa-subtle",
+        text: ok ? `«${entry.name}» agregada al catálogo.` : `«${entry.name}» ya estaba en el catálogo.`,
+      });
+    };
   }
 
   override onClose(): void {

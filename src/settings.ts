@@ -6,9 +6,17 @@ export interface OctaSuiteSettings {
   dataFolder: string;
   /**
    * Empresa activa: define la particion del journal (`journal/{companyId}/`)
-   * y la moneda base funcional para documentos nuevos.
+   * y la moneda base funcional para documentos nuevos. Es la PRIMERA de
+   * `activeCompanyIds` (la primaria); se mantiene por compatibilidad con v1.
    */
   activeCompanyId: string;
+  /**
+   * Empresas seleccionadas, en orden de selección. La PRIMERA es la primaria:
+   * destino de escrituras (quick add, facturas, inventario...) y base del
+   * journal que se lee. Las demás son empresas de solo-lectura cuyos
+   * indicadores y reportes se consolidan en launcher/reports.
+   */
+  activeCompanyIds: string[];
   currency: string;
   /** Tasa de IVA por defecto en porcentaje. En Guatemala, 12. */
   defaultTaxRate: number;
@@ -46,6 +54,7 @@ export interface OctaSuiteSettings {
 export const DEFAULT_SETTINGS: OctaSuiteSettings = {
   dataFolder: "octasuite-data",
   activeCompanyId: DEFAULT_COMPANY_ID,
+  activeCompanyIds: [DEFAULT_COMPANY_ID],
   currency: DEFAULT_CURRENCY,
   defaultTaxRate: 12,
   invoiceSeries: "A",

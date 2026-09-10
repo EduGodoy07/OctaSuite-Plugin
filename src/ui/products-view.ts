@@ -176,6 +176,12 @@ export class ProductsView extends ItemView {
           : await this.host.commit(this.host.newEvent("product.created", { productId: generateId("prd"), ...draft }));
         if (ok) new Notice(existing ? `${draft.name} actualizado` : `${draft.name} agregado`);
       },
+      onRegisterUom: async (entry) => {
+        // Feedback unico: el span del hint en el modal (product-modal.ts) muestra
+        // "agregada"/"ya estaba" segun el resultado — la Notice es redundante.
+        // Usa la instancia compartida del host (mismo mutex que el load).
+        return this.host.catalogs.saveUom(entry);
+      },
     }).open();
   }
 

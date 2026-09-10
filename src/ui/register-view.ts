@@ -1,6 +1,8 @@
 import {
   activeProducts,
   computeInvoiceTotals,
+  creditAccountByPartner,
+  creditBalanceFor,
   format,
   generateId,
   isConfigurable,
@@ -404,10 +406,25 @@ export class RegisterView extends ItemView {
     new CheckoutModal(this.app, {
       total: totals.total,
       host: this.host,
-      methods: PAYMENT_METHODS,
+      methods: [...PAYMENT_METHODS, "Crédito"],
       defaultMethod: settings.defaultPaymentMethod,
       locale: settings.locale,
       onSubmit: async ({ partner, method }) => {
+        // El crédito de cliente exige identificar a quien queda debiendo.
+        if (method === "Crédito") {
+          if (!partner) {
+            new Notice("Seleccioná un cliente para cobrar a crédito.");
+            return;
+          }
+          const available = creditBalanceFor(this.host.state, partner.id, settings.currency);
+          if (available.minor < totals.total.minor) {
+            new Notice(
+              `Crédito insuficiente para ${partner.name}: disponible ${format(available, settings.locale)}, requerido ${format(totals.total, settings.locale)}.`,
+            );
+            return;
+          }
+        }
+
         const authority = new LocalNumberAuthority(
           (series) => this.host.state.lastNumberBySeries.get(series),
           "personal",
@@ -431,6 +448,24 @@ export class RegisterView extends ItemView {
           }),
         );
         if (!issued) return;
+
+        // El crédito de cliente descuenta del saldo del cliente, no del cajón.
+        if (method === "Crédito") {
+          const account = creditAccountByPartner(this.host.state, partner!.id);
+          if (!account) {
+            new Notice("No hay cuenta de crédito para este cliente.");
+            return;
+          }
+          const used = await this.host.commit(
+            this.host.newEvent("credit.used", {
+              accountId: account.id,
+              amount: totals.total,
+              reference: invoiceId,
+              note: `${settings.invoiceSeries}-${String(reserved.number).padStart(4, "0")}`,
+            }),
+          );
+          if (!used) return;
+        }
 
         // El cobro carga el turno: sin eso el arqueo no sabría qué le pertenece.
         await this.host.commit(

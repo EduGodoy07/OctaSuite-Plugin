@@ -36,6 +36,7 @@ export const LOYALTY_VIEW_TYPE = "octasuite-loyalty";
 export const ACCOUNTING_VIEW_TYPE = "octasuite-accounting";
 export const PAYROLL_VIEW_TYPE = "octasuite-payroll";
 export const INVENTORY_VIEW_TYPE = "octasuite-inventory";
+export const TASKS_VIEW_TYPE = "octasuite-tasks";
 export const LAUNCHER_VIEW_TYPE = "octasuite-launcher";
 export const REGISTER_VIEW_TYPE = "octasuite-register";
 export const SETTINGS_MODULE_ID = "configuracion";
@@ -60,6 +61,7 @@ export const KNOWN_VIEW_TYPES: readonly string[] = [
   ACCOUNTING_VIEW_TYPE,
   PAYROLL_VIEW_TYPE,
   INVENTORY_VIEW_TYPE,
+  TASKS_VIEW_TYPE,
 ];
 
 export const MODULES: readonly ModuleDef[] = [
@@ -88,6 +90,16 @@ export const MODULES: readonly ModuleDef[] = [
     icon: "settings",
     status: "ready",
     detail: "Moneda, IVA, serie y carpeta de datos",
+  },
+
+  {
+    id: "tareas",
+    name: "Tareas",
+    group: "Operación diaria",
+    icon: "list-checks",
+    status: "ready",
+    detail: "Lista de tareas con estados y fechas límite",
+    viewType: TASKS_VIEW_TYPE,
   },
 
   {
@@ -158,7 +170,7 @@ export const MODULES: readonly ModuleDef[] = [
   {
     id: "caja",
     name: "Caja",
-    group: "Más adelante",
+    group: "Administración",
     icon: "shopping-cart",
     status: "ready",
     detail: "Turno, arqueo y cobro rápido",
@@ -167,7 +179,7 @@ export const MODULES: readonly ModuleDef[] = [
   {
     id: "contabilidad",
     name: "Contabilidad",
-    group: "Más adelante",
+    group: "Administración",
     icon: "calculator",
     status: "ready",
     detail: "Partida doble, libro diario y mayor",
@@ -176,7 +188,7 @@ export const MODULES: readonly ModuleDef[] = [
   {
     id: "nomina",
     name: "Nómina",
-    group: "Más adelante",
+    group: "Administración",
     icon: "briefcase",
     status: "ready",
     detail: "Planilla, IGSS, ISR, bono 14 y aguinaldo",
@@ -185,7 +197,7 @@ export const MODULES: readonly ModuleDef[] = [
   {
     id: "inventario",
     name: "Inventario avanzado",
-    group: "Más adelante",
+    group: "Administración",
     icon: "warehouse",
     status: "ready",
     detail: "Ubicaciones, lotes y traslados",
@@ -197,9 +209,9 @@ export const MODULES: readonly ModuleDef[] = [
     group: "Fuera del vault",
     icon: "globe",
     status: "server",
-    detail: "Vitrina y tienda en línea",
+    detail: "Vitrina y catálogo público + tienda en línea",
     reason:
-      "Un vault no puede servir una página pública a internet: esto es lo único que de verdad exige un servidor. Ya lo cubren los módulos Odoo propios.",
+      "La vitrina se puede publicar desde el vault sin operar un servidor (Obsidian Publish o export estático). La tienda transaccional — carrito, checkout, pagos e inventario en tiempo real — sí exige un backend, y la cubren los módulos Odoo propios.",
   },
 ];
 

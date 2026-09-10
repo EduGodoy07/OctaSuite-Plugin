@@ -10,13 +10,12 @@ import {
   type LoyaltyReward,
 } from "@octasuite/core";
 import { ItemView, Menu, Notice, type WorkspaceLeaf } from "obsidian";
+import { LOYALTY_VIEW_TYPE } from "../modules.js";
 import { moduleHeader } from "./nav.js";
 import type { PluginHost } from "./host.js";
 import { ConfirmModal } from "./confirm-modal.js";
 import { RewardModal } from "./reward-modal.js";
 import { PointsAdjustModal } from "./points-adjust-modal.js";
-
-export const LOYALTY_VIEW_TYPE = "octasuite-loyalty-view";
 
 const TIER_COLORS: Record<string, string> = {
   bronce: "#CD7F32",

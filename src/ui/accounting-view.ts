@@ -19,10 +19,10 @@ import {
   type Money,
 } from "@octasuite/core";
 import { App, ItemView, Modal, Notice, type WorkspaceLeaf } from "obsidian";
+import { ACCOUNTING_VIEW_TYPE } from "../modules.js";
+import { companyLabel } from "./company-switcher.js";
 import { moduleHeader } from "./nav.js";
 import type { PluginHost } from "./host.js";
-
-export const ACCOUNTING_VIEW_TYPE = "octasuite-accounting-view";
 
 type Tab = "chart" | "journal" | "trial";
 
@@ -52,6 +52,20 @@ export class AccountingView extends ItemView {
 
     const top = this.contentEl.createDiv();
     moduleHeader(top, "Contabilidad", this.host, this.app, this.leaf, ACCOUNTING_VIEW_TYPE);
+
+    // La contabilidad todavía NO consolida multi-empresa: los asientos, el plan
+    // de cuentas y el balance son de la empresa primaria. Avisar para que un
+    // usuario con varias empresas no crea que el balance es del grupo.
+    if (this.host.activeCompanyIds.length > 1) {
+      const primary = this.host.activeCompanyIds[0];
+      const banner = top.createDiv({ cls: "octa-warning" });
+      banner.createEl("strong", { text: "Contabilidad consolidada en desarrollo" });
+      banner.createEl("p", {
+        text: primary
+          ? `Esta pantalla trabaja solo sobre la empresa primaria (${companyLabel(primary)}). La consolidación de asientos y balance para el grupo está pendiente; los demás módulos ya consolidan en Inicio y Reportes.`
+          : "Esta pantalla trabaja solo sobre la empresa primaria. La consolidación de asientos y balance para el grupo está pendiente.",
+      });
+    }
 
     // Tab bar
     const tabBar = top.createDiv({ cls: "octa-period" });

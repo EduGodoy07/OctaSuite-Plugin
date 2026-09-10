@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   computeInvoiceTotals,
   creditNotesFor,
+  discountSummary,
   expensesByCategory,
   invoiceNetTotal,
   fromDecimal,
@@ -14,6 +15,7 @@ import {
   totalsSnapshot,
   type AnyEvent,
   type InvoiceLine,
+  type State,
 } from "../src/index.js";
 
 let seq = 0;
@@ -262,5 +264,148 @@ describe("receiptData()", () => {
     const invoice = state.invoices.get("inv_rc2")!;
     const data = receiptData(invoice, company, "");
     expect(data.footer).toBe("");
+  });
+});
+
+describe("Descuentos del periodo", () => {
+  const issuedWithLines = (invoiceId: string, number: number, date: string, lines: InvoiceLine[], currency = "GTQ") => ({
+    invoiceId,
+    series: "A",
+    number,
+    date,
+    currency,
+    lines,
+    totals: totalsSnapshot(computeInvoiceTotals(lines, currency)),
+    partnerName: "Cliente Uno",
+    partnerTaxId: "CF",
+  });
+
+  const plainLine = (price: string): InvoiceLine => ({
+    description: "Consultoria",
+    quantity: 1,
+    unitPrice: fromDecimal(price, "GTQ"),
+    taxRate: 12,
+  });
+
+  it("devuelve cero cuando no hay facturas en el mes", () => {
+    const { state, rejected } = project([
+      evt("invoice.issued", 10, issuedWithLines("inv_0", 1, "2026-08-10", [plainLine("100.00")])),
+    ]);
+    expect(rejected).toEqual([]);
+    const summary = discountSummary(state, "2026-09", "GTQ");
+    expect(summary.total.minor).toBe(0);
+    expect(summary.total.currency).toBe("GTQ");
+    expect(summary.documents).toBe(0);
+  });
+
+  it("suma el descuento porcentual por línea y cuenta el documento", () => {
+    const discounted: InvoiceLine[] = [{ ...plainLine("100.00"), discount: { percent: 10 } }];
+    const { state, rejected } = project([
+      evt("invoice.issued", 10, issuedWithLines("inv_1", 1, "2026-08-10", discounted)),
+    ]);
+    expect(rejected).toEqual([]);
+    const summary = discountSummary(state, "2026-08", "GTQ");
+    expect(summary.total.minor).toBe(1000); // 10% de 100.00 = 10.00
+    expect(summary.total.currency).toBe("GTQ");
+    expect(summary.documents).toBe(1);
+  });
+
+  it("suma el descuento fijo por línea", () => {
+    const discounted: InvoiceLine[] = [{ ...plainLine("100.00"), discount: { amount: fromDecimal("5.00", "GTQ") } }];
+    const { state, rejected } = project([
+      evt("invoice.issued", 10, issuedWithLines("inv_2", 2, "2026-08-10", discounted)),
+    ]);
+    expect(rejected).toEqual([]);
+    const summary = discountSummary(state, "2026-08", "GTQ");
+    expect(summary.total.minor).toBe(500); // 5.00 fijos
+    expect(summary.documents).toBe(1);
+  });
+
+  it("combina descuento porcentual y fijo en la misma línea", () => {
+    const discounted: InvoiceLine[] = [
+      { ...plainLine("100.00"), discount: { percent: 10, amount: fromDecimal("5.00", "GTQ") } },
+    ];
+    const { state, rejected } = project([
+      evt("invoice.issued", 10, issuedWithLines("inv_3", 3, "2026-08-10", discounted)),
+    ]);
+    expect(rejected).toEqual([]);
+    const summary = discountSummary(state, "2026-08", "GTQ");
+    expect(summary.total.minor).toBe(1500); // 10.00 + 5.00
+    expect(summary.documents).toBe(1);
+  });
+
+  it("excluye facturas sin descuento, de otro mes y de otra moneda", () => {
+    const usdLine: InvoiceLine = {
+      description: "Servicio USD",
+      quantity: 1,
+      unitPrice: fromDecimal("100.00", "USD"),
+      taxRate: 0,
+      discount: { percent: 10 },
+    };
+    const { state, rejected } = project([
+      evt("invoice.issued", 10, issuedWithLines("inv_a", 1, "2026-08-10", [{ ...plainLine("100.00"), discount: { percent: 10 } }])),
+      evt("invoice.issued", 10, issuedWithLines("inv_b", 2, "2026-08-11", [plainLine("100.00")])),
+      evt("invoice.issued", 10, issuedWithLines("inv_c", 3, "2026-09-01", [{ ...plainLine("100.00"), discount: { percent: 10 } }])),
+      evt("invoice.issued", 10, issuedWithLines("inv_d", 4, "2026-08-12", [usdLine], "USD")),
+    ]);
+    expect(rejected).toEqual([]);
+    const summary = discountSummary(state, "2026-08", "GTQ");
+    expect(summary.total.minor).toBe(1000); // solo inv_a
+    expect(summary.documents).toBe(1);
+  });
+
+  it("no tumba el reporte si una factura histórica tiene una línea con descuento inválido", () => {
+    // Datos históricos corruptos no debieran entrar por eventos (la validación de
+    // dominio los rechazaria), pero si llegan al journal, la consulta de reportes
+    // no puede lanzar y matar la vista: omite la linea y sigue.
+    const { state } = project([
+      evt("invoice.issued", 10, issuedWithLines("inv_corrupta", 1, "2026-08-10", [plainLine("100.00")])),
+    ]);
+    const invoice = state.invoices.get("inv_corrupta")!;
+    const badLine: InvoiceLine = { ...plainLine("100.00"), discount: { percent: 150 } };
+    const corrupt: State = {
+      ...state,
+      invoices: new Map(state.invoices).set("inv_corrupta", { ...invoice, lines: [badLine] }),
+    };
+    const summary = discountSummary(corrupt, "2026-08", "GTQ");
+    expect(summary.total.minor).toBe(0);
+    expect(summary.documents).toBe(0);
+  });
+
+  it("salta solo la línea corrupta y conserva el resto del periodo", () => {
+    const { state } = project([
+      evt("invoice.issued", 10, issuedWithLines("inv_bad", 1, "2026-08-10", [plainLine("100.00")])),
+      evt("invoice.issued", 10, issuedWithLines("inv_ok", 2, "2026-08-11", [{ ...plainLine("100.00"), discount: { percent: 10 } }])),
+    ]);
+    const invoice = state.invoices.get("inv_bad")!;
+    const badLine: InvoiceLine = { ...plainLine("100.00"), discount: { amount: fromDecimal("5000.00", "GTQ") } };
+    const corrupt: State = {
+      ...state,
+      invoices: new Map(state.invoices).set("inv_bad", { ...invoice, lines: [badLine] }),
+    };
+    const summary = discountSummary(corrupt, "2026-08", "GTQ");
+    expect(summary.total.minor).toBe(1000); // solo inv_ok
+    expect(summary.documents).toBe(1);
+  });
+
+  it("reporta el descuento bruto aunque la factura haya sido acreditada en el mismo mes", () => {
+    // Semantica decidida: discountSummary mide el descuento concedido en bruto
+    // (no netea notas de credito), a diferencia de totalInvoiced. Una NC en el
+    // mismo mes NO reduce el descuento reportado.
+    const discounted: InvoiceLine[] = [{ ...plainLine("100.00"), discount: { percent: 10 } }];
+    const { state, rejected } = project([
+      evt("invoice.issued", 10, issuedWithLines("inv_nc", 1, "2026-08-10", discounted)),
+      evt("invoice.credited", 11, {
+        creditNoteId: "cn_1",
+        invoiceId: "inv_nc",
+        date: "2026-08-12",
+        amount: fromDecimal("90.00", "GTQ"),
+        reason: "Descuento",
+      }),
+    ]);
+    expect(rejected).toEqual([]);
+    const summary = discountSummary(state, "2026-08", "GTQ");
+    expect(summary.total.minor).toBe(1000); // 10% bruto, no 0 por la NC
+    expect(summary.documents).toBe(1);
   });
 });

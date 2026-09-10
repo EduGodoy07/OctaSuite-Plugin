@@ -1,8 +1,11 @@
 import {
   activePartners,
+  creditAccountByPartner,
+  format,
   generateId,
   invoiceCountForPartner,
   isValidNit,
+  zero,
   type Partner,
   type PartnerDraft,
 } from "@octasuite/core";
@@ -12,6 +15,7 @@ import { ConfirmModal } from "./confirm-modal.js";
 import type { PluginHost } from "./host.js";
 import { moduleHeader } from "./nav.js";
 import { PartnerModal } from "./partner-modal.js";
+import { AmountModal } from "./register-modals.js";
 
 const TYPE_LABEL: Record<string, string> = {
   individual: "Persona",
@@ -124,6 +128,13 @@ export class PartnersView extends ItemView {
       const parent = this.host.state.partners.get(partner.parentId);
       if (parent) nameCell.createDiv({ cls: "octa-subtle", text: `de ${parent.name}` });
     }
+    const account = creditAccountByPartner(this.host.state, partner.id);
+    const balances = account
+      ? [...account.balances.entries()].filter(([, m]) => m.minor > 0)
+      : [];
+    if (balances.length > 0) {
+      nameCell.createDiv({ cls: "octa-subtle", text: `crédito: ${balances.map(([, m]) => format(m)).join(" + ")}` });
+    }
 
     row.createEl("td").createSpan({ cls: "octa-chip", text: TYPE_LABEL[partner.accountType] ?? partner.accountType });
 
@@ -145,7 +156,37 @@ export class PartnersView extends ItemView {
 
     const actions = row.createEl("td", { cls: "octa-actions" });
     actions.createEl("button", { text: "Editar" }).onclick = () => this.openEditor(partner);
+    actions.createEl("button", { text: "Crédito" }).onclick = () => this.openCredit(partner);
     actions.createEl("button", { text: "Archivar" }).onclick = () => this.confirmArchive(partner);
+  }
+
+  private openCredit(partner: Partner): void {
+    const { settings, state } = this.host;
+    const account = creditAccountByPartner(state, partner.id);
+    const current = account?.balances.get(settings.currency) ?? zero(settings.currency);
+    new AmountModal(this.app, {
+      title: `Abonar crédito · ${partner.name}`,
+      amountLabel: "Abono",
+      amountDesc: `Saldo actual: ${format(current, settings.locale)}`,
+      reasonLabel: "Nota",
+      confirmText: "Abonar",
+      currency: settings.currency,
+      onSubmit: async ({ amount, reason }) => {
+        const ok = await this.host.commit(
+          this.host.newEvent("credit.added", {
+            accountId: account?.id ?? generateId("crd"),
+            partnerId: partner.id,
+            partnerName: partner.name,
+            amount,
+            note: reason || "Abono manual",
+          }),
+        );
+        if (ok) {
+          new Notice(`${partner.name} · abono ${format(amount, settings.locale)}`);
+          this.renderList();
+        }
+      },
+    }).open();
   }
 
   private openEditor(existing?: Partner): void {

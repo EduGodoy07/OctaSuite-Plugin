@@ -14,6 +14,7 @@ import {
   assertCreditable,
   computeInvoiceTotals,
   formatInvoiceNumber,
+  lineDiscountAmount,
   type CreditNote,
   type Invoice,
 } from "./domain/invoice.js";
@@ -32,6 +33,7 @@ import {
   type LoyaltyReward,
   type LoyaltyTransaction,
 } from "./domain/loyalty.js";
+import type { CreditAccount, CreditTransaction } from "./domain/credit.js";
 import type { Partner } from "./domain/partner.js";
 import { validateCompanyChanges, validateCompanyDraft, type Company } from "./domain/company.js";
 import { validateExchangeRateDraft, type ExchangeRate } from "./domain/rate.js";
@@ -46,7 +48,7 @@ import { isCashMethod, type CashMovement, type Shift, type ShiftSummary } from "
 import { explodeLine, isKit, type Receipt, type StockAdjustment } from "./domain/stock.js";
 import { DomainError } from "./errors.js";
 import type { AnyEvent } from "./events.js";
-import { add, sum, zero, type CurrencyCode, type Money } from "./money.js";
+import { add, format, subtract, sum, zero, type CurrencyCode, type Money } from "./money.js";
 
 export interface Category {
   readonly id: string;
@@ -70,6 +72,10 @@ export interface State {
   readonly loyaltyAccounts: Map<string, LoyaltyAccount>;
   readonly loyaltyTransactions: Map<string, LoyaltyTransaction>;
   readonly loyaltyRewards: Map<string, LoyaltyReward>;
+  /** Cuentas de crédito de cliente. */
+  readonly creditAccounts: Map<string, CreditAccount>;
+  /** Transacciones de crédito de cliente. */
+  readonly creditTransactions: Map<string, CreditTransaction>;
   /** Plan de cuentas. */
   readonly accounts: Map<string, Account>;
   /** Asientos contables. */
@@ -106,6 +112,8 @@ export function emptyState(): State {
     loyaltyAccounts: new Map(),
     loyaltyTransactions: new Map(),
     loyaltyRewards: new Map(),
+    creditAccounts: new Map(),
+    creditTransactions: new Map(),
     accounts: new Map(),
     journalEntries: new Map(),
     lastNumberBySeries: new Map(),
@@ -635,6 +643,95 @@ export function apply(state: State, event: AnyEvent): RejectedEvent | null {
       return null;
     }
 
+    // ── Crédito de cliente ─────────────────────────────────────────────
+    case "credit.added": {
+      const p = event.payload;
+      if (p.amount.minor <= 0) return reject("invalid_amount", "El abono debe ser un importe positivo");
+      const existing = state.creditAccounts.get(p.accountId);
+      const account = existing ?? {
+        id: p.accountId,
+        partnerId: p.partnerId,
+        partnerName: p.partnerName,
+        balances: new Map<CurrencyCode, Money>(),
+        createdAt: event.at,
+        updatedAt: event.at,
+      };
+      state.creditAccounts.set(p.accountId, {
+        ...account,
+        partnerName: p.partnerName,
+        balances: new Map(account.balances).set(
+          p.amount.currency,
+          add(account.balances.get(p.amount.currency) ?? zero(p.amount.currency), p.amount),
+        ),
+        updatedAt: event.at,
+      });
+      state.creditTransactions.set(event.id, {
+        id: event.id,
+        accountId: p.accountId,
+        type: "added",
+        amount: p.amount,
+        reference: p.reference,
+        note: p.note,
+        createdAt: event.at,
+      });
+      return null;
+    }
+    case "credit.used": {
+      const p = event.payload;
+      if (p.amount.minor <= 0) return reject("invalid_amount", "El consumo debe ser un importe positivo");
+      const account = state.creditAccounts.get(p.accountId);
+      if (!account) return reject("not_found", `Cuenta de crédito inexistente: ${p.accountId}`);
+      const available = account.balances.get(p.amount.currency) ?? zero(p.amount.currency);
+      if (available.minor < p.amount.minor) {
+        return reject(
+          "insufficient_balance",
+          `Crédito insuficiente en ${p.amount.currency}: disponible ${format(available)}, requerido ${format(p.amount)}`,
+        );
+      }
+      state.creditAccounts.set(p.accountId, {
+        ...account,
+        balances: new Map(account.balances).set(
+          p.amount.currency,
+          subtract(available, p.amount),
+        ),
+        updatedAt: event.at,
+      });
+      state.creditTransactions.set(event.id, {
+        id: event.id,
+        accountId: p.accountId,
+        type: "used",
+        amount: { minor: -p.amount.minor, currency: p.amount.currency },
+        reference: p.reference,
+        note: p.note,
+        createdAt: event.at,
+      });
+      return null;
+    }
+    case "credit.adjusted": {
+      const p = event.payload;
+      const account = state.creditAccounts.get(p.accountId);
+      if (!account) return reject("not_found", `Cuenta de crédito inexistente: ${p.accountId}`);
+      const current = account.balances.get(p.amount.currency) ?? zero(p.amount.currency);
+      const newBalance = add(current, p.amount);
+      if (newBalance.minor < 0) {
+        return reject("negative_balance", `El ajuste dejaría el saldo en negativo en ${p.amount.currency}`);
+      }
+      state.creditAccounts.set(p.accountId, {
+        ...account,
+        balances: new Map(account.balances).set(p.amount.currency, newBalance),
+        updatedAt: event.at,
+      });
+      state.creditTransactions.set(event.id, {
+        id: event.id,
+        accountId: p.accountId,
+        type: "adjusted",
+        amount: p.amount,
+        note: p.reason,
+        createdAt: event.at,
+      });
+      return null;
+    }
+
     // ── Contabilidad ────────────────────────────────────────────────────
     case "accounting.account_created": {
       const { accountId, ...draft } = event.payload;
@@ -971,6 +1068,44 @@ export function totalInvoiced(state: State, month: MonthKey, currency: CurrencyC
     .filter((i) => i.currency === currency)
     .map((i) => ({ minor: i.totals.total.minor - i.creditedTotal.minor, currency }));
   return sum(amounts, currency);
+}
+
+export interface DiscountSummary {
+  total: Money;
+  documents: number;
+}
+
+/**
+ * Total descontado del periodo y cantidad de facturas con al menos una línea con
+ * descuento.
+ *
+ * Universo BRUTO: mide el descuento concedido sobre los DTE emitidos, sin netear
+ * notas de crédito (a diferencia de `totalInvoiced`, que sí descuenta
+ * `creditedTotal`). Una factura acreditada en el mismo mes sigue aportando su
+ * descuento.
+ *
+ * Resiliente a datos históricos corruptos: si una línea con descuento no puede
+ * calcularse (descuento fuera de rango, monto que excede la base), se omite esa
+ * línea sin tumbar la consulta — una proyección de reportes nunca debe morir por
+ * un registro inválido.
+ */
+export function discountSummary(state: State, month: MonthKey, currency: CurrencyCode): DiscountSummary {
+  const amounts: Money[] = [];
+  let documents = 0;
+  for (const invoice of invoicesInMonth(state, month)) {
+    if (invoice.currency !== currency) continue;
+    const lineDiscounts: Money[] = [];
+    for (const line of invoice.lines) {
+      try {
+        lineDiscounts.push(lineDiscountAmount(line));
+      } catch {
+        // Línea histórica inválida: se omite y se sigue con el resto.
+      }
+    }
+    if (lineDiscounts.some((d) => d.minor > 0)) documents += 1;
+    amounts.push(...lineDiscounts);
+  }
+  return { total: sum(amounts, currency), documents };
 }
 
 /**
@@ -1392,6 +1527,31 @@ export function loyaltyPointsSummary(state: State): {
     totalPoints: accounts.reduce((sum, a) => sum + a.points, 0),
     byTier: [...byTier.entries()].map(([tier, count]) => ({ tier, count })),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Crédito de cliente
+// ---------------------------------------------------------------------------
+
+export function allCreditAccounts(state: State): CreditAccount[] {
+  return [...state.creditAccounts.values()].sort((a, b) =>
+    a.partnerName.localeCompare(b.partnerName, "es"),
+  );
+}
+
+export function creditAccountByPartner(state: State, partnerId: string): CreditAccount | undefined {
+  return [...state.creditAccounts.values()].find((a) => a.partnerId === partnerId);
+}
+
+export function creditBalanceFor(state: State, partnerId: string, currency: CurrencyCode): Money {
+  const account = creditAccountByPartner(state, partnerId);
+  return account?.balances.get(currency) ?? zero(currency);
+}
+
+export function creditTransactionsFor(state: State, accountId: string): CreditTransaction[] {
+  return [...state.creditTransactions.values()]
+    .filter((t) => t.accountId === accountId)
+    .sort((a, b) => (a.createdAt > b.createdAt ? 1 : -1));
 }
 
 // ---------------------------------------------------------------------------

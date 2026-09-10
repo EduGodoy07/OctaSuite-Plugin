@@ -1,7 +1,19 @@
 import type { IsoDate, IsoInstant } from "../dates.js";
 import { DomainError, fail } from "../errors.js";
-import { add, compare, isNegative, multiply, percentOf, sum, zero, type CurrencyCode, type Money } from "../money.js";
+import { add, compare, isNegative, multiply, percentOf, subtract, sum, zero, type CurrencyCode, type Money } from "../money.js";
 import type { OptionSelection } from "./stock.js";
+
+/**
+ * Descuento de una linea de venta. Puede ser porcentual, por monto, o ambos.
+ * Si vienen ambos, se suman: `percent` de la base + `amount` fijo.
+ * Siempre se aplica sobre la base (qty × unitPrice) ANTES del IVA.
+ */
+export interface LineDiscount {
+  /** Porcentaje de la base. 10 = 10%. Rango valido: 0-100. */
+  readonly percent?: number;
+  /** Monto fijo en la moneda del documento. */
+  readonly amount?: Money;
+}
 
 export interface InvoiceLine {
   readonly description: string;
@@ -9,6 +21,8 @@ export interface InvoiceLine {
   readonly unitPrice: Money;
   /** IVA en porcentaje. 12 = 12%. */
   readonly taxRate: number;
+  /** Descuento aplicado a esta linea (opcional). */
+  readonly discount?: LineDiscount;
   readonly productId?: string;
   readonly unit?: string;
   /**
@@ -40,13 +54,42 @@ export interface InvoiceTotals extends LineTotals {
  * Consecuencia: los totales pueden diferir en centavos de los del ERP cuando
  * hay muchas lineas. Documentado, no accidental.
  */
+/**
+ * Descuento total efectivo de una linea (porcentual + fijo, en montos).
+ * Valida que el descuento no exceda la base de la linea.
+ */
+export function lineDiscountAmount(line: InvoiceLine): Money {
+  if (!line.discount) return zero(line.unitPrice.currency);
+  const { percent, amount } = line.discount;
+  if (percent === undefined && amount === undefined) {
+    fail("invoice.discount_empty", "El descuento requiere percent y/o amount");
+  }
+  if (percent !== undefined && (percent < 0 || percent > 100)) {
+    fail("invoice.discount_percent_invalid", `Porcentaje de descuento invalido: ${percent}`);
+  }
+  if (amount !== undefined && isNegative(amount)) {
+    fail("invoice.discount_amount_negative", "El monto de descuento no puede ser negativo");
+  }
+
+  const base = multiply(line.unitPrice, line.quantity);
+  const percentPart = percent !== undefined ? percentOf(base, percent) : zero(base.currency);
+  const amountPart = amount ?? zero(base.currency);
+  const discount = add(percentPart, amountPart);
+  if (compare(discount, base) > 0) {
+    fail("invoice.discount_exceeds_base", "El descuento excede la base de la linea");
+  }
+  return discount;
+}
+
 export function computeLineTotals(line: InvoiceLine): LineTotals {
   if (!Number.isFinite(line.quantity)) fail("invoice.quantity_invalid", `Cantidad invalida: ${line.quantity}`);
   if (line.quantity <= 0) fail("invoice.quantity_not_positive", "La cantidad debe ser mayor que cero");
   if (isNegative(line.unitPrice)) fail("invoice.price_negative", "El precio unitario no puede ser negativo");
   if (line.taxRate < 0 || line.taxRate > 100) fail("invoice.tax_rate_invalid", `Tasa invalida: ${line.taxRate}`);
 
-  const untaxed = multiply(line.unitPrice, line.quantity);
+  const untaxedGross = multiply(line.unitPrice, line.quantity);
+  const discount = lineDiscountAmount(line);
+  const untaxed = subtract(untaxedGross, discount);
   const tax = percentOf(untaxed, line.taxRate);
   return { untaxed, tax, total: add(untaxed, tax) };
 }

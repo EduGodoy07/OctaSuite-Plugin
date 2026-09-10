@@ -1,4 +1,5 @@
 import { App, setIcon, WorkspaceLeaf } from "obsidian";
+import { mountCompanySwitcher } from "./company-switcher.js";
 import type { PluginHost } from "./host.js";
 
 /**
@@ -36,6 +37,10 @@ export function moduleHeader(
     if (expand.childElementCount === 0) expand.setText("⤢");
     expand.onclick = () => host.expandToMain(viewType);
   }
+
+  // Selector multi-empresa en la barra de todos los módulos.
+  const right = bar.createDiv({ cls: "octa-nav-right" });
+  mountCompanySwitcher(right, host);
 
   return bar;
 }
