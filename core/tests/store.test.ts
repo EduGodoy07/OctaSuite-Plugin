@@ -409,3 +409,53 @@ describe("Descuentos del periodo", () => {
     expect(summary.documents).toBe(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Orden temporal tolerable a dependencias (regresion del journal real)
+//
+// Caso real (HighSoftTech, 2026-09): `invoice.refunded` con `at` ANTERIOR al
+// `invoice.issued` de su propia factura (sync/relojes entre dispositivos puede
+// invertir el orden de escritura). La proyeccion ordenada por `at` procesaba el
+// refund primero -> rechazo "Factura inexistente" permanente aunque la factura
+// SÍ llega mas tarde en el journal.
+// ---------------------------------------------------------------------------
+describe("Reconstruccion tolerante a dependencias", () => {
+  const refundPayload = (creditNoteId: string, invoiceId: string, day: number) => ({
+    creditNoteId,
+    invoiceId,
+    date: at(day),
+    amount: fromDecimal("50.00", "GTQ"),
+    reason: "Devolucion",
+    type: "store_credit" as const,
+  });
+
+  it("aplica un refund cuyo at es anterior al issued de su factura", () => {
+    const { state, rejected } = project([
+      evt("invoice.refunded", 2, refundPayload("ncr_1", "inv_1", 2)),
+      evt("invoice.issued", 4, issuedPayload("inv_1", 1)),
+    ]);
+    expect(rejected).toEqual([]);
+    expect(state.invoices.get("inv_1")).toBeDefined();
+    expect(state.creditNotes.has("ncr_1")).toBe(true);
+  });
+
+  it("resuelve dependencias en cadena (refund + paid antes que su issued)", () => {
+    const { state, rejected } = project([
+      evt("invoice.refunded", 2, refundPayload("ncr_1", "inv_1", 2)),
+      evt("invoice.paid", 3, { invoiceId: "inv_1", paidAt: at(3), paymentMethod: "efectivo" }),
+      evt("invoice.issued", 4, issuedPayload("inv_1", 1)),
+    ]);
+    expect(rejected).toEqual([]);
+    const invoice = state.invoices.get("inv_1")!;
+    expect(invoice.status).toBe("paid");
+    expect(invoice.creditNoteIds).toContain("ncr_1");
+  });
+
+  it("no oculta un refund de factura que nunca se emite (sigue en rejected)", () => {
+    const { state, rejected } = project([
+      evt("invoice.refunded", 2, refundPayload("ncr_1", "inv_ghost", 2)),
+    ]);
+    expect(rejected.map((r) => r.code)).toEqual(["not_found"]);
+    expect(state.creditNotes.size).toBe(0);
+  });
+});

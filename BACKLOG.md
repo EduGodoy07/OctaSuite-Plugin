@@ -100,6 +100,36 @@ IGSS, bono 14) — ninguna plataforma de las comunidades comparadas la tiene.
 
 ## Prioridad 2 — profundidad de plataforma
 
+### B-07 · Organigrama visual + CVs (PDF) y foto por empleado
+- **Por qué:** pedido directo de Eduardo (2026-09-11). El módulo de payroll ya
+  modela la jerarquía `managerId` desde hace tiempo (hasta N niveles, validación
+  de ciclos en `store.ts`), pero hoy solo se ve como un campo en el modal del
+  empleado. Un organigrama visual hace útil esa data (estructura de la empresa,
+  cadena de mando) y los adjuntos (CV PDF + foto) convierten el módulo de nómina
+  en el expediente del empleado.
+- **Estado:** IN PROGRESS (2026-09-11) — aprobado por Eduardo como punto del
+  plan; alcance inicial sin implementar.
+- **Alcance probable:**
+  1. **Vista "Organigrama"** (`ItemView` nuevo, tipo `octasuite-orgchart`):
+     árbol renderizado desde `state.employees` usando `managerId` (raíz =
+     empleado sin manager). Formato a decidir con Eduardo: canvas `.canvas`
+     nativo de Obsidian (generado en el vault) vs render HTML/SVG del plugin
+     (más control visual). Probar primero la opción SVG/HTML inline para no
+     depender de coordenadas manuales de canvas.
+  2. **Adjuntos por empleado:** foto + CV en PDF guardados en el vault
+     (`octasuite-data/employees/{employeeId}/foto.*` y `cv.pdf` vía
+     `vault.createBinary`), con `photoPath`/`cvPath` en el modelo `Employee`
+     persistidos como evento `employee.updated` (el journal sigue siendo la
+     fuente de verdad; los binarios viven fuera pero el path es inmutable en el
+     evento). Mostrar foto + acción "Ver CV" en el modal/expediente del empleado.
+  3. No tocar la validación de jerarquía existente (ya cubre ciclos/archivados).
+- **Archivos:** `packages/core/src/domain/payroll.ts` (campos nuevos),
+  `packages/core/src/store.ts` (evento `employee.updated`), `events.ts`,
+  `packages/obsidian-plugin/src/ui/orgchart-view.ts` (nueva),
+  `ui/payroll-view.ts` (expediente + subida de archivos), `modules.ts`.
+- **Dependencias:** ninguna externa. 100% offline (vault). Puede apoyarse en la
+  jerarquía existente de `payroll`.
+
 ### B-03 · Dual pricing / listas de precios por cliente
 - **Por qué:** Square pide precio in-store vs online; Odoo lo resuelve con
   pricelists. Es la base para B2B vs retail.

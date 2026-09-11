@@ -1152,14 +1152,52 @@ export interface Projection {
   readonly rejected: RejectedEvent[];
 }
 
+/**
+ * Proyecta el journal completo a estado.
+ *
+ * Tolerante a dependencias no resueltas: como los eventos se procesan por `at`,
+ * un `invoice.paid`/`invoice.refunded` cuyo `at` es anterior al de su
+ * `invoice.issued` (sync entre dispositivos, relojes desincronizados) fallaria
+ * con `not_found` aunque la entidad SI llega mas tarde en el journal. Por eso la
+ * proyeccion reintenta por pasadas: los eventos que fallan con `not_found` se
+ * difieren a la pasada siguiente; solo se reportan como rechazados cuando dejan
+ * de resolverse (sin progreso entre pasadas) — un refund de una factura que
+ * nunca se emite sigue siendo un rechazo real.
+ */
 export function project(events: readonly AnyEvent[]): Projection {
   const state = emptyState();
-  const rejected: RejectedEvent[] = [];
-  for (const event of events) {
-    const problem = apply(state, event);
-    if (problem) rejected.push(problem);
+  const rejectedByPos: { problem: RejectedEvent; pos: number }[] = [];
+  let pending: { event: AnyEvent; pos: number }[] = events.map((event, pos) => ({ event, pos }));
+  while (pending.length > 0) {
+    const nextPending: { event: AnyEvent; pos: number }[] = [];
+    const nextProblems: { problem: RejectedEvent; pos: number }[] = [];
+    let progress = false;
+    for (const { event, pos } of pending) {
+      const problem = apply(state, event);
+      if (!problem) {
+        progress = true;
+        continue;
+      }
+      if (problem.code === "not_found") {
+        // Dependencia quizas no resuelta aun: reintentar en la pasada siguiente.
+        nextPending.push({ event, pos });
+        nextProblems.push({ problem, pos });
+        continue;
+      }
+      rejectedByPos.push({ problem, pos });
+    }
+    if (nextPending.length === 0) break;
+    if (!progress) {
+      // Ningun evento se aplico: los pendientes son rechazos definitivos.
+      rejectedByPos.push(...nextProblems);
+      break;
+    }
+    pending = nextPending;
   }
-  return { state, rejected };
+  // Los rechazados se reportan en el orden original del journal, no en el orden
+  // en que cada pasada los resolvio (contrato observable estable).
+  rejectedByPos.sort((a, b) => a.pos - b.pos);
+  return { state, rejected: rejectedByPos.map((x) => x.problem) };
 }
 
 // ---------------------------------------------------------------------------
