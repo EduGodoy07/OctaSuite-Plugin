@@ -1,4 +1,5 @@
 import {
+  allCreditNotes,
   consolidatedCustomerMetrics,
   consolidatedDailyExpenses,
   consolidatedDiscountSummary,
@@ -14,7 +15,7 @@ import {
   toIsoDate,
 } from "@octasuite/core";
 import { ItemView, Notice, WorkspaceLeaf } from "obsidian";
-import { REPORTS_VIEW_TYPE } from "../modules.js";
+import { CREDIT_NOTES_VIEW_TYPE, REPORTS_VIEW_TYPE } from "../modules.js";
 import { DEFAULT_COMPANY_ID } from "../storage/vault-journal.js";
 import { companyLabel } from "./company-switcher.js";
 import type { PluginHost } from "./host.js";
@@ -178,6 +179,37 @@ export class ReportsView extends ItemView {
       );
       this.kpi(grid, "Ticket promedio", format(customers.avgTicket, locale));
     });
+
+    // Notas de crédito del período (consolidadas multi-empresa).
+    const creditNotes = states.flatMap((s) => allCreditNotes(s)).filter((n) => monthKeyOf(n.date) === this.month);
+    this.block(
+      contentEl,
+      "Notas de crédito",
+      creditNotes.length === 0 ? "Sin notas de crédito en el período." : null,
+      (body) => {
+        const grid = body.createDiv({ cls: "octa-kpis" });
+        this.kpi(grid, "Notas emitidas", String(creditNotes.length));
+        const total = creditNotes.reduce((acc, n) => acc + n.amount.minor, 0);
+        this.kpi(grid, "Total acreditado", format({ minor: total, currency }, locale));
+
+        const table = body.createEl("table", { cls: "octa-table" });
+        const tbody = table.createEl("tbody");
+        for (const note of creditNotes) {
+          const row = tbody.createEl("tr");
+          row.createEl("td", { text: note.date });
+          row.createEl("td", { cls: "octa-mono", text: note.id });
+          row.createEl("td", { text: note.reason });
+          row.createEl("td", { text: format(note.amount, locale), cls: "octa-num" });
+        }
+        const open = body.createEl("button", {
+          cls: "octa-btn",
+          text: "Ver listado completo",
+          title: "Abrir la vista de notas de crédito",
+        });
+        open.onclick = () =>
+          this.app.workspace.getLeaf("split").setViewState({ type: CREDIT_NOTES_VIEW_TYPE, active: true });
+      },
+    );
 
     // Huecos del correlativo: la serie vive en settings (única), así que la
     // revisión se hace sobre la empresa primaria. Con multi se avisa el alcance.

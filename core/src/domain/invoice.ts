@@ -152,6 +152,24 @@ export interface CreditNote {
   readonly createdAt: IsoInstant;
 }
 
+/**
+ * Nota de crédito como se persiste en el estado (incluye los campos del
+ * borrador extendido B-05). `type` queda opcional: las notas creadas por
+ * `invoice.credited` no lo llevan; las de `invoice.refunded` sí.
+ */
+export interface StoredCreditNote extends CreditNote {
+  readonly type?: CreditNoteType;
+  readonly lines?: readonly {
+    readonly productId: string;
+    readonly quantity: number;
+    readonly unitPrice: Money;
+    readonly taxRate: number;
+  }[];
+  readonly tenderRefund?: TenderRefund;
+  readonly stockReturnLocationId?: string;
+  readonly exchangeLines?: readonly ExchangeLine[];
+}
+
 /** Tipo de nota de crédito: anulación a crédito del cliente, reembolso al tender original, o cambio. */
 export type CreditNoteType = "store_credit" | "refund" | "exchange";
 

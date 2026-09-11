@@ -20,6 +20,7 @@ import {
   lineDiscountAmount,
   type TenderRefund,
   type CreditNote,
+  type StoredCreditNote,
   type CreditNoteDraft,
   type Invoice,
   validateCreditNoteDraft,
@@ -70,7 +71,7 @@ export interface State {
   readonly products: Map<string, Product>;
   readonly categories: Map<string, Category>;
   readonly invoices: Map<string, Invoice>;
-  readonly creditNotes: Map<string, CreditNote>;
+  readonly creditNotes: Map<string, StoredCreditNote>;
   readonly shifts: Map<string, Shift>;
   readonly movements: Map<string, CashMovement>;
   readonly receipts: Map<string, Receipt>;
@@ -1346,6 +1347,22 @@ export function creditNotesFor(state: State, invoiceId: string): CreditNote[] {
   return invoice.creditNoteIds
     .map((id) => state.creditNotes.get(id))
     .filter((note): note is CreditNote => note !== undefined);
+}
+
+/**
+ * Todas las notas de crédito de la empresa activa, más recientes primero.
+ * Devuelve el tipo extendido `StoredCreditNote` para que la vista pueda
+ * distinguir store_credit/refund/exchange sin re-proyectar nada.
+ */
+export function allCreditNotes(state: State): StoredCreditNote[] {
+  return [...state.creditNotes.values()].sort((a, b) =>
+    b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt),
+  );
+}
+
+/** Notas de crédito emitidas en un mes (`YYYY-MM`), más recientes primero. */
+export function creditNotesInPeriod(state: State, month: MonthKey): StoredCreditNote[] {
+  return allCreditNotes(state).filter((n) => monthKeyOf(n.date) === month);
 }
 
 /** Saldo vivo del documento: total menos lo acreditado. No descuenta el pago. */

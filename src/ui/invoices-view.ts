@@ -14,7 +14,7 @@ import {
   type Invoice,
 } from "@octasuite/core";
 import { ItemView, Notice, WorkspaceLeaf } from "obsidian";
-import { INVOICES_VIEW_TYPE, PAYMENT_RECEIPT_VIEW_TYPE } from "../modules.js";
+import { INVOICES_VIEW_TYPE, PAYMENT_RECEIPT_VIEW_TYPE, CREDIT_NOTES_VIEW_TYPE } from "../modules.js";
 import { CreditNoteModal } from "./credit-note-modal.js";
 import type { PluginHost } from "./host.js";
 import { moduleHeader } from "./nav.js";
@@ -119,12 +119,13 @@ export class InvoicesView extends ItemView {
     const saldo = row.createEl("td", { cls: "octa-num" });
     saldo.setText(format(pendiente, locale));
     const notes = creditNotesFor(this.host.state, invoice.id);
-    if (notes.length > 0) {
-      saldo.createDiv({
-        cls: "octa-subtle",
-        text: `${notes.length} nota(s) de crédito`,
-      });
-    }
+      if (notes.length > 0) {
+        saldo.createEl("button", {
+          cls: "octa-btn octa-btn-ghost",
+          text: `${notes.length} nota(s) de crédito`,
+          title: "Ver notas de crédito de esta factura",
+        }).onclick = () => this.openCreditNotes(invoice);
+      }
 
     const status = row.createEl("td");
     if (invoice.status === "paid") {
@@ -248,6 +249,15 @@ export class InvoicesView extends ItemView {
         if (ok) new Notice(`Nota de crédito (${type ?? "store_credit"}) emitida sobre ${invoice.displayNumber}`);
       },
     }).open();
+  }
+
+  private openCreditNotes(invoice: Invoice): void {
+    const leaf = this.app.workspace.getLeaf("split");
+    leaf.setViewState({
+      type: CREDIT_NOTES_VIEW_TYPE,
+      active: true,
+      state: { filterInvoiceId: invoice.id },
+    });
   }
 
   private kpi(parent: HTMLElement, label: string, value: string, hint?: string): void {

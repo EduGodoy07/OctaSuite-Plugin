@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  allCreditNotes,
   computeInvoiceTotals,
+  creditNotesInPeriod,
   creditNotesFor,
   discountSummary,
   expensesByCategory,
@@ -36,6 +38,15 @@ const issuedPayload = (invoiceId: string, number: number) => ({
   totals: totalsSnapshot(computeInvoiceTotals(lines, "GTQ")),
   partnerName: "Cliente Uno",
   partnerTaxId: "CF",
+});
+
+const refundPayload = (creditNoteId: string, invoiceId: string, day: number) => ({
+  creditNoteId,
+  invoiceId,
+  date: at(day),
+  amount: fromDecimal("50.00", "GTQ"),
+  reason: "Devolucion",
+  type: "store_credit" as const,
 });
 
 describe("Proyeccion de gastos", () => {
@@ -420,15 +431,6 @@ describe("Descuentos del periodo", () => {
 // SÍ llega mas tarde en el journal.
 // ---------------------------------------------------------------------------
 describe("Reconstruccion tolerante a dependencias", () => {
-  const refundPayload = (creditNoteId: string, invoiceId: string, day: number) => ({
-    creditNoteId,
-    invoiceId,
-    date: at(day),
-    amount: fromDecimal("50.00", "GTQ"),
-    reason: "Devolucion",
-    type: "store_credit" as const,
-  });
-
   it("aplica un refund cuyo at es anterior al issued de su factura", () => {
     const { state, rejected } = project([
       evt("invoice.refunded", 2, refundPayload("ncr_1", "inv_1", 2)),
@@ -457,5 +459,79 @@ describe("Reconstruccion tolerante a dependencias", () => {
     ]);
     expect(rejected.map((r) => r.code)).toEqual(["not_found"]);
     expect(state.creditNotes.size).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Listado de notas de crédito (vista CREDIT_NOTES_VIEW_TYPE)
+// ---------------------------------------------------------------------------
+describe("allCreditNotes", () => {
+  it("lista todas las notas de la empresa activa ordenadas por fecha desc", () => {
+    const { state, rejected } = project([
+      evt("invoice.issued", 1, issuedPayload("inv_1", 1)),
+      evt("invoice.refunded", 2, refundPayload("ncr_1", "inv_1", 2)),
+      evt("invoice.refunded", 3, refundPayload("ncr_2", "inv_1", 3)),
+    ]);
+    expect(rejected).toEqual([]);
+    const notes = allCreditNotes(state);
+    expect(notes.map((n) => n.id)).toEqual(["ncr_2", "ncr_1"]);
+    expect(notes.every((n) => n.type === "store_credit")).toBe(true);
+  });
+
+  it("incluye notas base (credited) sin type junto a las extendidas", () => {
+    const { state } = project([
+      evt("invoice.issued", 1, issuedPayload("inv_1", 1)),
+      evt("invoice.credited", 2, {
+        creditNoteId: "ncr_base",
+        invoiceId: "inv_1",
+        date: "2026-08-10",
+        amount: fromDecimal("30.00", "GTQ"),
+        reason: "Descuento",
+      }),
+      evt("invoice.refunded", 3, refundPayload("ncr_ext", "inv_1", 3)),
+    ]);
+    const notes = allCreditNotes(state);
+    expect(notes).toHaveLength(2);
+    const base = notes.find((n) => n.id === "ncr_base")!;
+    const ext = notes.find((n) => n.id === "ncr_ext")!;
+    expect(base.type).toBeUndefined();
+    expect(ext.type).toBe("store_credit");
+  });
+
+  it("expone los campos extendidos (tenderRefund/exchangeLines) si existen", () => {
+    const { state } = project([
+      evt("invoice.issued", 1, issuedPayload("inv_1", 1)),
+      evt("invoice.refunded", 3, {
+        ...refundPayload("ncr_x", "inv_1", 3),
+        type: "refund",
+        tenderRefund: { method: "efectivo", amount: fromDecimal("50.00", "GTQ") },
+      }),
+    ]);
+    const note = allCreditNotes(state)[0]!;
+    expect(note.type).toBe("refund");
+    expect(note.tenderRefund?.method).toBe("efectivo");
+  });
+});
+
+describe("creditNotesInPeriod", () => {
+  it("filtra las notas por mes, sin traer las de otros meses", () => {
+    const { state } = project([
+      evt("invoice.issued", 1, issuedPayload("inv_1", 1)),
+      // Nota en agosto (mes del fixture)
+      evt("invoice.refunded", 3, { ...refundPayload("ncr_ago", "inv_1", 3), date: "2026-08-03" }),
+      // Nota en septiembre
+      evt("invoice.refunded", 32, { ...refundPayload("ncr_sep", "inv_1", 32), date: "2026-09-01" }),
+      // Nota en julio
+      evt("invoice.refunded", 33, { ...refundPayload("ncr_jul", "inv_1", 33), date: "2026-07-01" }),
+    ]);
+    const notes = creditNotesInPeriod(state, "2026-08");
+    expect(notes.map((n) => n.id)).toEqual(["ncr_ago"]);
+  });
+
+  it("solo toma notas existentes (rechazadas o pendientes no aparecen)", () => {
+    const { state } = project([
+      evt("invoice.refunded", 2, refundPayload("ncr_ghost", "inv_ghost", 2)),
+    ]);
+    expect(creditNotesInPeriod(state, "2026-08")).toEqual([]);
   });
 });

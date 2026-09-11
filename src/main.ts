@@ -26,6 +26,7 @@ import {
 import { App, Notice, Plugin, PluginSettingTab, Setting, type WorkspaceLeaf } from "obsidian";
 import {
   ACCOUNTING_VIEW_TYPE,
+  CREDIT_NOTES_VIEW_TYPE,
   EXPENSES_VIEW_TYPE,
   INVENTORY_VIEW_TYPE,
   INVOICES_VIEW_TYPE,
@@ -62,6 +63,7 @@ import { ExpensesView } from "./ui/expenses-view.js";
 import type { PluginHost } from "./ui/host.js";
 import { mountCompanySwitcher } from "./ui/company-switcher.js";
 import { InvoicesView } from "./ui/invoices-view.js";
+import { CreditNotesView } from "./ui/credit-notes-view.js";
 import { InventoryView } from "./ui/inventory-view.js";
 import { TasksView } from "./ui/tasks-view.js";
 import { LauncherView } from "./ui/launcher-view.js";
@@ -196,6 +198,7 @@ export default class OctaSuitePlugin extends Plugin implements PluginHost {
     this.registerView(PARTNERS_VIEW_TYPE, (leaf: WorkspaceLeaf) => new PartnersView(leaf, this));
     this.registerView(PRODUCTS_VIEW_TYPE, (leaf: WorkspaceLeaf) => new ProductsView(leaf, this));
     this.registerView(INVOICES_VIEW_TYPE, (leaf: WorkspaceLeaf) => new InvoicesView(leaf, this));
+    this.registerView(CREDIT_NOTES_VIEW_TYPE, (leaf: WorkspaceLeaf) => new CreditNotesView(leaf, this));
     this.registerView(RECEIPTS_VIEW_TYPE, (leaf: WorkspaceLeaf) => new ReceiptsView(leaf, this));
     this.registerView(PAYMENT_RECEIPT_VIEW_TYPE, (leaf: WorkspaceLeaf) => new ReceiptView(leaf, this));
     this.registerView(REGISTER_VIEW_TYPE, (leaf: WorkspaceLeaf) => new RegisterView(leaf, this));
