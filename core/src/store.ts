@@ -552,8 +552,8 @@ export function apply(state: State, event: AnyEvent): RejectedEvent | null {
             description: `Reembolso ${p.tenderRefund.method} por nota ${p.creditNoteId}`,
             reference: p.creditNoteId,
             lines: [
-              { accountId: tenderAccount.id, debit: p.tenderRefund.amount, credit: zero(p.tenderRefund.amount.currency), description: `Salida ${p.tenderRefund.method}` },
-              { accountId: arAccount.id, debit: zero(p.tenderRefund.amount.currency), credit: p.tenderRefund.amount, description: `Reducción clientes por devolución` },
+              { accountId: tenderAccount.id, debit: zero(p.tenderRefund.amount.currency), credit: p.tenderRefund.amount, description: `Salida ${p.tenderRefund.method}` },
+              { accountId: arAccount.id, debit: p.tenderRefund.amount, credit: zero(p.tenderRefund.amount.currency), description: `Reducción clientes por devolución` },
             ],
             status: "posted",
             postedAt: event.at,
