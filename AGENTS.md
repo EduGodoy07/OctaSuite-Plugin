@@ -68,7 +68,12 @@
    - Todo cambio no trivial debe ser sometido a revisión de invariantes y edge cases antes de considerarse terminado.
 5. **Control de Versiones (Git):**
    - Repositorio remoto: `https://github.com/EduGodoy07/OctaSuite-Plugin`.
-   - Mirror local de git: `/tmp/octasuite-plugin-stage`.
+   - **Este directorio ES el repo git** (rama `staging`, trackeando `origin/staging`).
+     El `.git/` se creó el 2026-09-21 alineado con el contenido ya sincronizado; NO borrar `.git`.
+   - **Topología de ramas:**
+     - `staging` = rama de desarrollo activa (monorepo `packages/*`). Flujo de trabajo: pull → cambio → commit → push.
+     - `main` = rama histórica con estructura plana vieja (`core/`, `src/`, `tests/`, esbuild), pre-plan B. Actualizada como contenido-subsconjunto (equivalencia verificada 2026-09-21) pero su estructura sigue la línea vieja — sin migración acordada todavía.
+   - **Flujo de trabajo:** `git pull` al empezar, `git status` para ver la deriva real, `git add/commit/push` directo desde este directorio.
    - **Regla:** Solo hacer commit y push con confirmación explícita de Eduardo.
 
 ---
