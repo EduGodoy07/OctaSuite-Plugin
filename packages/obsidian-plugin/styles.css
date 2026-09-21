@@ -32,6 +32,38 @@
   font-size: var(--font-ui-small);
 }
 
+/* Barra derecha de la cabecera de módulos (selector de empresas). */
+.octa-nav-right {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-1);
+  margin-left: auto;
+}
+
+/* Selector multi-empresa: botón que resume la selección y abre el menú. */
+.octa-company-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--size-4-1);
+  font-size: var(--font-ui-small);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  padding: var(--size-4-1) var(--size-4-2);
+  background: var(--background-secondary);
+  color: var(--text-normal);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.octa-company-chip:hover {
+  background: var(--background-modifier-hover);
+}
+
+.octa-company-chip-icon {
+  display: inline-flex;
+  color: var(--text-muted);
+}
+
 .octa-mono {
   font-family: var(--font-monospace);
   font-size: var(--font-ui-small);
@@ -94,16 +126,169 @@
   margin: 0;
 }
 
-.octa-orgchart-node {
+.octa-orgchart { margin-top: var(--size-4-2); }
+
+.octa-orgchart-wrap {
+  width: 100%;
+  overflow: auto;
+  margin-top: var(--size-4-2);
+}
+
+.octa-orgchart-svg {
+  display: block;
+}
+
+.octa-orgchart-text {
+  font-family: var(--font-interface);
+}
+
+.octa-orgchart-edges path {
+  stroke: var(--background-modifier-border);
+  stroke-width: 1.5;
+  fill: none;
+}
+
+.octa-orgchart-nodes rect {
+  fill: var(--background-secondary-alt);
+  stroke: var(--background-modifier-border);
+  stroke-width: 1;
+}
+
+.octa-orgchart-nodes .is-root rect {
+  stroke: var(--interactive-accent);
+  stroke-width: 1.5;
+}
+
+.octa-orgchart-nodes circle {
+  fill: var(--interactive-accent);
+}
+
+.octa-orgchart-initials {
+  fill: var(--text-on-accent);
+  font-size: 10px;
+  font-weight: 600;
+  pointer-events: none;
+}
+
+.octa-orgchart-name {
+  fill: var(--text-normal);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.octa-orgchart-role {
+  fill: var(--text-muted);
+  font-size: 10px;
+}
+/* --- Bloques de departamento en el organigrama --- */
+/* Fondo y estructura del bloque de área */
+.octa-orgchart-block-bg rect {
+  fill: var(--background-secondary-alt);
+  stroke: var(--background-modifier-border);
+  stroke-width: 1;
+  rx: 8;
+}
+/* Header del bloque (cabecera coloreada) */
+.octa-orgchart-block-header rect {
+  fill: var(--interactive-accent);
+  rx: 8 8 0 0;
+}
+/* Texto del nombre del bloque */
+.octa-orgchart-block-label {
+  fill: var(--text-on-accent);
+  font-size: 10px;
+  font-weight: 600;
+  dominant-baseline: middle;
+}
+/* --- Conectores internos: header de bloque -> cada miembro --- */
+.octa-orgchart-edges path.octa-block-member-path {
+  stroke: var(--text-muted);
+  stroke-width: 1;
+  fill: none;
+}
+
+/* --- Organigrama con áreas por departamento --- */
+
+/* Contenedor y fondo de los bloques de área (agrupación por department). */
+.octa-orgchart-blocks .octa-orgchart-block-bg {
+  fill: var(--background-secondary-alt);
+  stroke: var(--background-modifier-border);
+  stroke-width: 1;
+  rx: 8; /* nota: rx no es válido en rect de SVG dentro de un g transformado; el rx va en el rect */
+}
+
+.octa-orgchart-block-bg rect {
+  rx: 8;
+}
+
+.octa-orgchart-block-header {
+  fill: var(--interactive-accent);
+  stroke: var(--background-modifier-border);
+  stroke-width: 1;
+}
+
+.octa-orgchart-block-label {
+  fill: var(--text-on-accent);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+/* --- Nodos (personas) --- */
+.octa-orgchart-nodes circle {
+  fill: var(--interactive-accent);
+}
+
+.octa-orgchart-initials {
+  fill: var(--text-on-accent);
+  font-size: 10px;
+  font-weight: 600;
+  pointer-events: none;
+}
+
+.octa-orgchart-name {
+  fill: var(--text-normal);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.octa-orgchart-role {
+  fill: var(--text-muted);
+  font-size: 10px;
+}
+
+/* --- Expediente de empleado (foto + adjuntos) --- */
+
+.octa-employee-photo {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  object-fit: cover;
+  vertical-align: middle;
+}
+
+.octa-attachments {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-4-2);
+  margin: var(--size-4-2) 0;
+}
+
+.octa-attachment-row {
   display: flex;
   align-items: center;
-  gap: var(--size-4-1);
-  margin-top: var(--size-4-1);
-  margin-bottom: var(--size-4-1);
-  padding: var(--size-4-1) var(--size-4-3);
-  border-radius: var(--radius-m);
-  background: var(--background-secondary-alt);
-  width: fit-content;
+  gap: var(--size-4-2);
+}
+
+.octa-attachment-label {
+  font-weight: 600;
+  width: 96px;
+}
+
+.octa-attachment-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* --- Mosaicos de módulo --- */
@@ -325,6 +510,11 @@
 .octa-search {
   min-width: 12rem;
   max-width: 20rem;
+}
+
+.octa-filter {
+  max-width: 11rem;
+  font-size: var(--font-ui-small);
 }
 
 .octa-form-errors:empty { display: none; }

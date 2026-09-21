@@ -1,62 +1,28 @@
-import { describe, expect, it, vi } from "vitest";
-import {
-  assertSingleOperator,
-  LocalNumberAuthority,
-  RemoteNumberAuthority,
-  type Transport,
-} from "../src/index.js";
+import { describe, expect, it } from "vitest";
+import { LocalNumberAuthority } from "../src/index.js";
 
-describe("Autoridad local", () => {
-  it("asigna el siguiente correlativo de la serie", async () => {
-    const authority = new LocalNumberAuthority((series) => (series === "A" ? 41 : undefined), "personal");
-    await expect(authority.reserve("A")).resolves.toEqual({ series: "A", number: 42 });
-    await expect(authority.reserve("B")).resolves.toEqual({ series: "B", number: 1 });
+describe("Autoridad local (modo Personal, único modo soportado)", () => {
+  it("asigna el siguiente correlativo de la serie, de forma síncrona", () => {
+    const authority = new LocalNumberAuthority((series) => (series === "A" ? 41 : undefined));
+    const first = authority.reserve("A");
+    // El contrato es síncrono: el resultado es el objeto, no una Promise.
+    expect(first).toEqual({ series: "A", number: 42 });
+    expect(first).not.toBeInstanceOf(Promise);
+    expect(authority.reserve("B")).toEqual({ series: "B", number: 1 });
   });
 
-  it("no se puede construir en modo conectado", () => {
-    expect(() => new LocalNumberAuthority(() => 1, "conectado")).toThrow(/servidor/);
+  it("vuelve a 1 cuando la serie no tiene correlativo previo", () => {
+    const authority = new LocalNumberAuthority(() => undefined);
+    expect(authority.reserve("X")).toEqual({ series: "X", number: 1 });
   });
 
-  it("exige serie", async () => {
-    const authority = new LocalNumberAuthority(() => 1, "personal");
-    await expect(authority.reserve("  ")).rejects.toThrow(/serie/);
-  });
-});
-
-describe("Autoridad remota", () => {
-  it("usa el correlativo que reserva el servidor, no el local", async () => {
-    const transport: Transport = vi.fn(async () => ({ series: "A", number: 108, token: "rsv_abc" }));
-    const authority = new RemoteNumberAuthority(transport);
-    await expect(authority.reserve("A")).resolves.toEqual({ series: "A", number: 108, token: "rsv_abc" });
-    expect(transport).toHaveBeenCalledWith("documents/reserve-number", { series: "A" });
+  it("reporta el modo personal", () => {
+    const authority = new LocalNumberAuthority(() => 1);
+    expect(authority.mode).toBe("personal");
   });
 
-  it("rechaza una respuesta sin correlativo utilizable", async () => {
-    for (const bad of [null, {}, { number: "42" }, { number: 0 }, { number: 1.5 }]) {
-      const authority = new RemoteNumberAuthority(async () => bad);
-      await expect(authority.reserve("A")).rejects.toThrow(/servidor|invalido/);
-    }
-  });
-
-  it("rechaza si el servidor reserva otra serie", async () => {
-    const authority = new RemoteNumberAuthority(async () => ({ series: "B", number: 1 }));
-    await expect(authority.reserve("A")).rejects.toThrow(/serie B/);
-  });
-
-  it("propaga la falla de red en vez de caer a numeracion local", async () => {
-    const authority = new RemoteNumberAuthority(async () => {
-      throw new Error("sin conexion");
-    });
-    await expect(authority.reserve("A")).rejects.toThrow(/sin conexion/);
-  });
-});
-
-describe("Barrera de operador unico", () => {
-  it("permite la operacion en modo personal", () => {
-    expect(() => assertSingleOperator("personal", "Emitir factura")).not.toThrow();
-  });
-
-  it("la bloquea en modo conectado", () => {
-    expect(() => assertSingleOperator("conectado", "Emitir factura")).toThrow(/requiere autoridad del servidor/);
+  it("exige serie", () => {
+    const authority = new LocalNumberAuthority(() => 1);
+    expect(() => authority.reserve("  ")).toThrow(/serie/);
   });
 });

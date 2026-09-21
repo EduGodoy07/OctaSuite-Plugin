@@ -36,13 +36,25 @@ export const LOYALTY_VIEW_TYPE = "octasuite-loyalty";
 export const ACCOUNTING_VIEW_TYPE = "octasuite-accounting";
 export const PAYROLL_VIEW_TYPE = "octasuite-payroll";
 export const INVENTORY_VIEW_TYPE = "octasuite-inventory";
+export const EQUIPMENT_VIEW_TYPE = "octasuite-equipment";
 export const TASKS_VIEW_TYPE = "octasuite-tasks";
 export const LAUNCHER_VIEW_TYPE = "octasuite-launcher";
 export const REGISTER_VIEW_TYPE = "octasuite-register";
+export const CREDIT_NOTES_VIEW_TYPE = "octasuite-credit-notes";
 export const SETTINGS_MODULE_ID = "configuracion";
 
 /** Todas las vistas del plugin comparten prefijo, para poder barrer las viejas. */
 export const VIEW_TYPE_PREFIX = "octasuite-";
+
+/**
+ * Detecta si un tipo de vista pertenece a OctaSuite por prefijo (y no por lista
+ * exacta). Cualquier vista `octasuite-*` — vigente, legacy o de una constante
+ * divergida de versiones anteriores — se reutiliza al navegar en lugar de abrir
+ * una pestaña nueva. Testeado en `tests/modules.test.ts` (regresión 2026-09-09).
+ */
+export function isOctaSuiteViewType(viewType: string): boolean {
+  return viewType.startsWith(VIEW_TYPE_PREFIX);
+}
 
 /** Tipos de vista vigentes. Cualquier otro con el prefijo es de una versión anterior. */
 export const KNOWN_VIEW_TYPES: readonly string[] = [
@@ -55,12 +67,14 @@ export const KNOWN_VIEW_TYPES: readonly string[] = [
   RECEIPTS_VIEW_TYPE,
   PAYMENT_RECEIPT_VIEW_TYPE,
   REGISTER_VIEW_TYPE,
+  CREDIT_NOTES_VIEW_TYPE,
   PAYABLES_VIEW_TYPE,
   LEADS_VIEW_TYPE,
   LOYALTY_VIEW_TYPE,
   ACCOUNTING_VIEW_TYPE,
   PAYROLL_VIEW_TYPE,
   INVENTORY_VIEW_TYPE,
+  EQUIPMENT_VIEW_TYPE,
   TASKS_VIEW_TYPE,
 ];
 
@@ -202,6 +216,15 @@ export const MODULES: readonly ModuleDef[] = [
     status: "ready",
     detail: "Ubicaciones, lotes y traslados",
     viewType: INVENTORY_VIEW_TYPE,
+  },
+  {
+    id: "equipos",
+    name: "Equipos",
+    group: "Administración",
+    icon: "laptop",
+    status: "ready",
+    detail: "Activos de uso interno, asignación y depreciación",
+    viewType: EQUIPMENT_VIEW_TYPE,
   },
   {
     id: "sitio",

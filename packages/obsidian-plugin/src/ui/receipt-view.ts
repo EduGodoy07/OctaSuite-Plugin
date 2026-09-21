@@ -1,4 +1,4 @@
-import { format, type Invoice } from "@octasuite/core";
+import { computeLineTotals, format, lineDiscountAmount, type Invoice } from "@octasuite/core";
 import { ItemView, type ViewStateResult, WorkspaceLeaf } from "obsidian";
 import { PAYMENT_RECEIPT_VIEW_TYPE } from "../modules.js";
 import type { PluginHost } from "./host.js";
@@ -137,46 +137,40 @@ export class ReceiptView extends ItemView {
     const wrap = contentEl.createDiv({ cls: "octa-table-wrap" });
     const table = wrap.createEl("table", { cls: "octa-table octa-receipt-table" });
     const thead = table.createEl("thead").createEl("tr");
-    for (const label of ["Descripción", "Cant.", "Precio Unit.", "Subtotal", "IVA", "Total"]) {
+    for (const label of ["Descripción", "Cant.", "Precio Unit.", "Subtotal", "Descuento", "IVA", "Total"]) {
       thead.createEl("th", { text: label });
     }
     const tbody = table.createEl("tbody");
-    let subtotalAcum = 0;
-    let ivaAcum = 0;
-    let totalAcum = 0;
 
     for (const line of invoice.lines) {
-      const subtotal = line.unitPrice.minor * line.quantity;
-      const tax = Math.round((subtotal * line.taxRate) / 100);
-      const total = subtotal + tax;
-      subtotalAcum += subtotal;
-      ivaAcum += tax;
-      totalAcum += total;
+      const totals = computeLineTotals(line);
+      const discount = lineDiscountAmount(line);
 
       const tr = tbody.createEl("tr");
       tr.createEl("td", { text: line.description });
       tr.createEl("td", { text: String(line.quantity), cls: "octa-num" });
-      tr.createEl("td", { text: format({ minor: line.unitPrice.minor, currency }, locale), cls: "octa-num" });
-      tr.createEl("td", { text: format({ minor: subtotal, currency }, locale), cls: "octa-num" });
-      tr.createEl("td", { text: line.taxRate > 0 ? `${line.taxRate}%` : "-", cls: "octa-num" });
-      tr.createEl("td", { text: format({ minor: total, currency }, locale), cls: "octa-num" });
+      tr.createEl("td", { text: format(line.unitPrice, locale), cls: "octa-num" });
+      tr.createEl("td", { text: format(totals.untaxed, locale), cls: "octa-num" });
+      tr.createEl("td", { text: format(discount, locale), cls: "octa-num" });
+      tr.createEl("td", { text: format(totals.tax, locale), cls: "octa-num" });
+      tr.createEl("td", { text: format(totals.total, locale), cls: "octa-num" });
     }
 
-    // Totales
+    // Totales — siempre desde invoice.totals (lo realmente cobrado), nunca recalculados
     const tfoot = table.createEl("tfoot").createEl("tr");
-    const footerLabel = tfoot.createEl("td", { attr: { colspan: "5" } });
+    const footerLabel = tfoot.createEl("td", { attr: { colspan: "6" } });
     footerLabel.createEl("strong", { text: "Subtotal:" });
-    tfoot.createEl("td", { text: format({ minor: subtotalAcum, currency }, locale), cls: "octa-num" });
+    tfoot.createEl("td", { text: format(invoice.totals.untaxed, locale), cls: "octa-num" });
 
     const trIva = table.createEl("tfoot").createEl("tr");
-    const ivaLabel = trIva.createEl("td", { attr: { colspan: "5" } });
+    const ivaLabel = trIva.createEl("td", { attr: { colspan: "6" } });
     ivaLabel.createEl("strong", { text: "IVA:" });
-    trIva.createEl("td", { text: format({ minor: ivaAcum, currency }, locale), cls: "octa-num" });
+    trIva.createEl("td", { text: format(invoice.totals.tax, locale), cls: "octa-num" });
 
     const trTotal = table.createEl("tfoot").createEl("tr");
-    const totalLabel = trTotal.createEl("td", { attr: { colspan: "5" } });
+    const totalLabel = trTotal.createEl("td", { attr: { colspan: "6" } });
     totalLabel.createEl("strong", { text: "Total:" });
-    trTotal.createEl("td", { text: format({ minor: totalAcum, currency }, locale), cls: "octa-num" });
+    trTotal.createEl("td", { text: format(invoice.totals.total, locale), cls: "octa-num" });
 
     // Notas si existen
     if (invoice.notes) {

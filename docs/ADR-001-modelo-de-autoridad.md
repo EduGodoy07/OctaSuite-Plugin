@@ -6,6 +6,20 @@
 
 ---
 
+## Actualización 2026-09-18 (plan B — independencia)
+
+**El modo Conectado queda FUERA DE ALCANCE del core por decisión de Eduardo.**
+Se eliminó la maquinaria `RemoteNumberAuthority` / `Transport` /
+`assertSingleOperator` y `reserve()` volvió a ser síncrono. El conector al
+servidor OctaSuite (API v1 + Sanctum) **no se implementará en este repo**
+mientras el modo Personal no esté completo y estable; si algún día se retoma,
+se reintroduce con su propia revisión de diseño.
+
+Las secciones siguientes describen el diseño original (2026-08-25) y quedan
+como historial; el código vigente es el modo Personal únicamente.
+
+---
+
 ## Contexto
 
 El proyecto arrancó con tres requisitos que se contradicen entre sí:

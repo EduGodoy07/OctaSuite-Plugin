@@ -14,7 +14,7 @@ import {
   type Invoice,
 } from "@octasuite/core";
 import { ItemView, Notice, WorkspaceLeaf } from "obsidian";
-import { INVOICES_VIEW_TYPE, PAYMENT_RECEIPT_VIEW_TYPE } from "../modules.js";
+import { INVOICES_VIEW_TYPE, PAYMENT_RECEIPT_VIEW_TYPE, CREDIT_NOTES_VIEW_TYPE } from "../modules.js";
 import { CreditNoteModal } from "./credit-note-modal.js";
 import type { PluginHost } from "./host.js";
 import { moduleHeader } from "./nav.js";
@@ -119,12 +119,13 @@ export class InvoicesView extends ItemView {
     const saldo = row.createEl("td", { cls: "octa-num" });
     saldo.setText(format(pendiente, locale));
     const notes = creditNotesFor(this.host.state, invoice.id);
-    if (notes.length > 0) {
-      saldo.createDiv({
-        cls: "octa-subtle",
-        text: `${notes.length} nota(s) de crédito`,
-      });
-    }
+      if (notes.length > 0) {
+        saldo.createEl("button", {
+          cls: "octa-btn octa-btn-ghost",
+          text: `${notes.length} nota(s) de crédito`,
+          title: "Ver notas de crédito de esta factura",
+        }).onclick = () => this.openCreditNotes(invoice);
+      }
 
     const status = row.createEl("td");
     if (invoice.status === "paid") {
@@ -214,22 +215,49 @@ export class InvoicesView extends ItemView {
   }
 
   private openCreditNote(invoice: Invoice): void {
+    // Buscar en qué empresa está la factura para escribir la nota en la partición correcta
+    let invoiceCompanyId = this.host.activeCompanyIds[0];
+    for (const [companyId, state] of this.host.statesByCompany) {
+      if (state.invoices.has(invoice.id)) {
+        invoiceCompanyId = companyId;
+        break;
+      }
+    }
+
     new CreditNoteModal(this.app, {
       invoice,
       locale: this.host.settings.locale,
-      onSubmit: async ({ amount, reason, date }) => {
+      products: this.host.state.products,
+      locations: this.host.state.locations,
+      onSubmit: async ({ amount, reason, date, type, tenderMethod, returnLines, exchangeLines, stockReturnLocationId }) => {
+        const creditNoteId = generateId("ncr");
         const ok = await this.host.commit(
-          this.host.newEvent("invoice.credited", {
-            creditNoteId: generateId("ncr"),
+          this.host.newEvent("invoice.refunded", {
+            creditNoteId,
             invoiceId: invoice.id,
             date,
             amount,
             reason,
+            type: type ?? "store_credit",
+            tenderRefund: tenderMethod ? { method: tenderMethod, amount } : undefined,
+            lines: returnLines,
+            exchangeLines,
+            stockReturnLocationId,
           }),
+          { companyId: invoiceCompanyId },
         );
-        if (ok) new Notice(`Nota de crédito emitida sobre ${invoice.displayNumber}`);
+        if (ok) new Notice(`Nota de crédito (${type ?? "store_credit"}) emitida sobre ${invoice.displayNumber}`);
       },
     }).open();
+  }
+
+  private openCreditNotes(invoice: Invoice): void {
+    const leaf = this.app.workspace.getLeaf("split");
+    leaf.setViewState({
+      type: CREDIT_NOTES_VIEW_TYPE,
+      active: true,
+      state: { filterInvoiceId: invoice.id },
+    });
   }
 
   private kpi(parent: HTMLElement, label: string, value: string, hint?: string): void {

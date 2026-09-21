@@ -103,24 +103,44 @@ export function isrOnSalary(taxable: Money, policy: PayrollPolicy): Money {
   return { minor: 0, currency: taxable.currency }; // sin tramo: exento
 }
 
-/** Bono 14 anual: 50% del salario mensual más alto del período (art. 183 Código de Trabajo). */
-export function bono14AnnualEntitlement(highestSalary: Money): Money {
-  return multiply(highestSalary, 0.5);
+/**
+ * Bono 14 anual: un salario mensual completo (100%) por año trabajado
+ * (art. 183 Código de Trabajo, Decreto 42-92). Quien no completó el período
+ * (1-jul a 30-jun) recibe la parte proporcional por días laborados.
+ */
+export function bono14AnnualEntitlement(highestSalary: Money, workedDays: number, periodDays = 365): Money {
+  assertProration(workedDays, periodDays);
+  return multiply(highestSalary, Math.min(1, workedDays / periodDays));
 }
 
-/** Aguinaldo anual: 50% del salario mensual más alto del año (art. 102 Código de Trabajo). */
-export function aguinaldoAnnualEntitlement(highestSalary: Money): Money {
-  return multiply(highestSalary, 0.5);
+/**
+ * Aguinaldo anual: un salario mensual completo (100%) por año trabajado
+ * (art. 102 Código de Trabajo). Quien no completó el año calendario recibe
+ * la parte proporcional por días laborados.
+ */
+export function aguinaldoAnnualEntitlement(highestSalary: Money, workedDays: number, periodDays = 365): Money {
+  assertProration(workedDays, periodDays);
+  return multiply(highestSalary, Math.min(1, workedDays / periodDays));
+}
+
+/** Un prorrateo válido exige días no negativos y un período de al menos un día. */
+function assertProration(workedDays: number, periodDays: number): void {
+  if (!Number.isFinite(workedDays) || workedDays < 0) {
+    fail("payroll.invalid_worked_days", `Días trabajados inválidos: ${workedDays}`);
+  }
+  if (!Number.isFinite(periodDays) || periodDays <= 0) {
+    fail("payroll.invalid_period_days", `Días del período inválidos: ${periodDays}`);
+  }
 }
 
 /** Provisión mensual del Bono 14: anual / 12. */
 export function bono14MonthlyProvision(gross: Money): Money {
-  return multiply(gross, 1 / 24);
+  return multiply(gross, 1 / 12);
 }
 
 /** Provisión mensual del aguinaldo: anual / 12. */
 export function aguinaldoMonthlyProvision(gross: Money): Money {
-  return multiply(gross, 1 / 24);
+  return multiply(gross, 1 / 12);
 }
 
 // ── Empleados ─────────────────────────────────────────────────────────
@@ -138,9 +158,19 @@ export interface Employee {
   readonly responsibilities?: readonly string[];
   /** NIT/CUI opcional; si viene, se espera el formato guatemalteco. */
   readonly taxId?: string;
+  /** Móvil personal del empleado (contacto). El móvil corporativo asignado vive en el inventario de equipos. */
+  readonly phone?: string;
+  /** Email del empleado (contacto; personal o corporativo). */
+  readonly email?: string;
   readonly hireDate: IsoDate;
   readonly baseSalary: Money;
   readonly contractType?: ContractType;
+  /** Path en el vault del retrato del empleado (relativo a la raíz del vault). */
+  readonly photoPath?: string;
+  /** Path en el vault del CV en PDF del empleado (relativo a la raíz del vault). */
+  readonly cvPath?: string;
+  /** Departamento/área del empleado (texto libre, ej. "Ventas", "Operaciones"). Usado para agrupar en el organigrama. */
+  readonly department?: string;
   readonly archived: boolean;
   readonly createdAt: IsoInstant;
   readonly updatedAt: IsoInstant;
@@ -166,6 +196,10 @@ export const STANDARD_RESPONSIBILITIES: readonly string[] = [
   "Supervisión de personal",
 ] as const;
 
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const PHONE_RE = /^\+?[0-9\s().-]{7,20}$/;
+const TAX_ID_RE = /^(\d{8}|\d{13})$/;
+
 export function validateEmployeeDraft(draft: Partial<EmployeeDraft>): DomainError[] {
   const errors: DomainError[] = [];
   if (!draft.name?.trim()) errors.push(new DomainError("El nombre del empleado es obligatorio", "payroll.name_required"));
@@ -177,6 +211,27 @@ export function validateEmployeeDraft(draft: Partial<EmployeeDraft>): DomainErro
   }
   if (draft.contractType && !["fijo", "indefinido", "temporal"].includes(draft.contractType)) {
     errors.push(new DomainError(`Tipo de contrato inválido: ${draft.contractType}`, "payroll.bad_contract"));
+  }
+  if (draft.photoPath !== undefined && draft.photoPath.trim() === "") {
+    errors.push(new DomainError("El path de la foto no puede estar vacío", "payroll.bad_attachment_path"));
+  }
+  if (draft.cvPath !== undefined && draft.cvPath.trim() === "") {
+    errors.push(new DomainError("El path del CV no puede estar vacío", "payroll.bad_attachment_path"));
+  }
+  if (draft.department !== undefined && draft.department.trim() === "") {
+    errors.push(new DomainError("El departamento no puede estar vacío", "payroll.bad_department"));
+  }
+  // Contacto: opcionales, pero si vienen con contenido se validan. El celular
+  // admite cualquier código de país (empleados extranjeros), no solo +502.
+  if (draft.email !== undefined && draft.email.trim() !== "" && !EMAIL_RE.test(draft.email.trim())) {
+    errors.push(new DomainError(`Email inválido: ${draft.email}`, "payroll.bad_email"));
+  }
+  if (draft.phone !== undefined && draft.phone.trim() !== "" && !PHONE_RE.test(draft.phone.trim())) {
+    errors.push(new DomainError(`Celular inválido: ${draft.phone}`, "payroll.bad_phone"));
+  }
+  // NIT guatemalteco = 8 dígitos; CUI = 13 dígitos. Vacío/ausente = ok.
+  if (draft.taxId !== undefined && draft.taxId.trim() !== "" && !TAX_ID_RE.test(draft.taxId.trim())) {
+    errors.push(new DomainError(`NIT/CUI inválido: ${draft.taxId}`, "payroll.bad_tax_id"));
   }
   return errors;
 }

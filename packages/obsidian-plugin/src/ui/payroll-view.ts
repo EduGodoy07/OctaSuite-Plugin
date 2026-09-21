@@ -21,7 +21,7 @@ import {
   type PayrollRun,
   type PayrollTotals,
 } from "@octasuite/core";
-import { App, ItemView, Modal, Notice, Setting, type WorkspaceLeaf } from "obsidian";
+import { App, ItemView, Modal, Notice, Setting, TFile, type WorkspaceLeaf } from "obsidian";
 import { PAYROLL_VIEW_TYPE } from "../modules.js";
 import { ConfirmModal } from "./confirm-modal.js";
 import type { PluginHost } from "./host.js";
@@ -134,7 +134,7 @@ export class PayrollView extends ItemView {
     const wrap = el.createDiv({ cls: "octa-table-wrap" });
     const table = wrap.createEl("table", { cls: "octa-table" });
     const head = table.createEl("thead").createEl("tr");
-    for (const label of ["Nombre", "Puesto", "NIT/CUI", "Contrato", "Salario base", "Desde", ""]) {
+    for (const label of ["Nombre", "Puesto", "NIT/CUI", "Celular", "Email", "Contrato", "Salario base", "Desde", "Expediente", ""]) {
       head.createEl("th", { text: label });
     }
 
@@ -157,6 +157,8 @@ export class PayrollView extends ItemView {
 
     row.createEl("td", { text: employee.position ?? "—" });
     row.createEl("td", { text: employee.taxId ?? "—", cls: "octa-mono" });
+    row.createEl("td", { text: employee.phone ?? "—", cls: "octa-mono" });
+    row.createEl("td", { text: employee.email ?? "—" });
     row.createEl("td", {
       text: employee.contractType ? CONTRACT_LABEL[employee.contractType] : "—",
     });
@@ -165,6 +167,27 @@ export class PayrollView extends ItemView {
       cls: "octa-num",
     });
     row.createEl("td", { text: employee.hireDate, cls: "octa-mono" });
+
+    // Expediente: foto + CV desde el vault (claves photoPath/cvPath opcionales).
+    const fileCell = row.createEl("td");
+    if (employee.photoPath) {
+      const file = this.app.vault.getAbstractFileByPath(employee.photoPath);
+      if (file instanceof TFile) {
+        fileCell.createEl("img", {
+          cls: "octa-employee-photo",
+          attr: { src: this.app.vault.getResourcePath(file), alt: "" },
+        });
+      } else {
+        fileCell.createSpan({ cls: "octa-subtle", text: "foto sin archivo" });
+      }
+    }
+    if (employee.cvPath) {
+      const file = this.app.vault.getAbstractFileByPath(employee.cvPath);
+      fileCell.createEl("button", { text: "Ver CV" }).onclick = () => {
+        if (file instanceof TFile) this.app.workspace.openLinkText(file.path, "");
+        else new Notice("El archivo del CV no existe en el vault");
+      };
+    }
 
     const actions = row.createEl("td", { cls: "octa-actions" });
     actions.createEl("button", { text: "Editar" }).onclick = () => this.openEmployee(employee);
@@ -217,7 +240,7 @@ export class PayrollView extends ItemView {
     }).open();
   }
 
-  // ── Tab 3: Organigrama ─────────────────────────────────────────────
+  // ── Tab 3: Organigrama con bloques por departamento ──────────────────
 
   private renderOrgchart(): void {
     const el = this.contentEl;
@@ -235,6 +258,7 @@ export class PayrollView extends ItemView {
       return;
     }
 
+    // Hijos directos por manager
     const byManager = new Map<string, Employee[]>();
     for (const employee of employees) {
       if (!employee.managerId) continue;
@@ -244,26 +268,238 @@ export class PayrollView extends ItemView {
     }
     for (const children of byManager.values()) children.sort((a, b) => a.name.localeCompare(b.name));
 
-    // Raíz = sin jefe, o con jefe que ya no está activo (archivado/inexistente):
-    // el subordinado queda visible como raíz en lugar de perderse en el organigrama.
+    // Raíces = sin jefe (o con jefe archivado/inexistente).
+    // Se registran bajo la key "" porque layoutBlocks(null, …) consulta
+    // byManager.get(""). Sin esto el organigrama queda vacío (0 bloques):
+    // el bucle de arriba saltea a quienes no tienen managerId.
     const roots = rootEmployees(this.host.state);
+    byManager.set("", roots);
 
-    const list = el.createDiv({ cls: "octa-orgchart" });
-    for (const root of roots) this.renderOrgNode(list, root, byManager, 0);
-  }
+    // Layout SVG con bloques por departamento
+    const NS = "http://www.w3.org/2000/svg";
+    const BLOCK_W = 320;
+    const BLOCK_PAD = 16;
+    const HEADER_H = 36;
+    const CARD_H = 52;
+    const CARD_GAP = 8;
+    const BLOCK_GAP = 24;
+    const LEVEL_GAP = 80;
 
-  private renderOrgNode(
-    parent: HTMLElement,
-    node: Employee,
-    byManager: Map<string, Employee[]>,
-    depth: number,
-  ): void {
-    const row = parent.createDiv({ cls: "octa-orgchart-node" });
-    row.style.marginLeft = `${depth * 20}px`;
-    row.createSpan({ text: node.name });
-    if (node.position) row.createSpan({ cls: "octa-subtle", text: ` — ${node.position}` });
-    const children = byManager.get(node.id);
-    for (const child of children ?? []) this.renderOrgNode(parent, child, byManager, depth + 1);
+    // Cálculo de posiciones: recursivo por manager → bloques por dept → tarjetas
+    interface BlockLayout {
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      managerId: string | null;
+      dept: string;
+      employees: Employee[];
+      childrenBlocks: BlockLayout[];
+    }
+
+    let maxX = 0;
+    let maxY = 0;
+
+    const layoutBlocks = (managerId: string | null, depth: number, startY: number): { blocks: BlockLayout[]; nextY: number } => {
+      const mgrEmployees = byManager.get(managerId ?? "") ?? [];
+      if (mgrEmployees.length === 0) return { blocks: [], nextY: startY };
+
+      // Agrupar por department
+      const byDept = new Map<string, Employee[]>();
+      for (const e of mgrEmployees) {
+        const dept = e.department?.trim() ?? "";
+        const key = dept || "— sin departamento —";
+        const arr = byDept.get(key) ?? [];
+        arr.push(e);
+        byDept.set(key, arr);
+      }
+
+      // Orden: alfabético, "sin departamento" al final
+      const deptEntries = Array.from(byDept.entries()).sort(([a], [b]) => {
+        if (a === "— sin departamento —") return 1;
+        if (b === "— sin departamento —") return -1;
+        return a.localeCompare(b);
+      });
+
+      let y = startY;
+      const blocks: BlockLayout[] = [];
+      for (const [dept, emps] of deptEntries) {
+        const blockH = HEADER_H + emps.length * CARD_H + (emps.length - 1) * CARD_GAP + BLOCK_PAD * 2;
+        const block: BlockLayout = {
+          x: BLOCK_PAD + depth * (BLOCK_W + BLOCK_GAP),
+          y,
+          width: BLOCK_W,
+          height: blockH,
+          managerId,
+          dept: dept === "— sin departamento —" ? "" : dept,
+          employees: emps,
+          childrenBlocks: [],
+        };
+        // Layout recursivo de sub-bloques (hijos de estos empleados que son managers)
+        for (const emp of emps) {
+          const childResult = layoutBlocks(emp.id, depth + 1, y);
+          block.childrenBlocks.push(...childResult.blocks);
+        }
+        y += blockH + BLOCK_GAP;
+        blocks.push(block);
+        maxX = Math.max(maxX, block.x + block.width);
+        maxY = Math.max(maxY, block.y + block.height);
+      }
+      return { blocks, nextY: y };
+    };
+
+    const { blocks: rootBlocks } = layoutBlocks(null, 0, BLOCK_PAD);
+    const width = maxX + BLOCK_PAD;
+    const height = Math.max(300, maxY + BLOCK_PAD);
+
+    const wrap = el.createDiv({ cls: "octa-orgchart-wrap" });
+    const svg = document.createElementNS(NS, "svg");
+    svg.setAttribute("width", String(width));
+    svg.setAttribute("height", String(height));
+    svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+    svg.setAttribute("class", "octa-orgchart-svg octa-orgchart-blocks");
+    wrap.appendChild(svg);
+
+    // Defs para gradientes si se desea (opcional)
+    const defs = document.createElementNS(NS, "defs");
+    svg.appendChild(defs);
+
+    // Conectores: header de bloque → cada tarjeta (member path)
+    const edges = document.createElementNS(NS, "g");
+    edges.setAttribute("class", "octa-orgchart-edges");
+    svg.appendChild(edges);
+
+    // Nodos y bloques
+    const blocksG = document.createElementNS(NS, "g");
+    blocksG.setAttribute("class", "octa-orgchart-blocks");
+    svg.appendChild(blocksG);
+
+    const renderBlock = (block: BlockLayout, parentHeaderCenter?: { x: number; y: number }): void => {
+      const { x, y, width, height, dept, employees, childrenBlocks } = block;
+
+      // Fondo del bloque
+      const bg = document.createElementNS(NS, "rect");
+      bg.setAttribute("class", "octa-orgchart-block-bg");
+      bg.setAttribute("x", String(x));
+      bg.setAttribute("y", String(y));
+      bg.setAttribute("width", String(width));
+      bg.setAttribute("height", String(height));
+      bg.setAttribute("rx", "8");
+      blocksG.appendChild(bg);
+
+      // Header del bloque
+      const header = document.createElementNS(NS, "rect");
+      header.setAttribute("class", "octa-orgchart-block-header");
+      header.setAttribute("x", String(x));
+      header.setAttribute("y", String(y));
+      header.setAttribute("width", String(width));
+      header.setAttribute("height", String(HEADER_H));
+      header.setAttribute("rx", "8 8 0 0");
+      blocksG.appendChild(header);
+
+      // Label del header
+      const label = document.createElementNS(NS, "text");
+      label.setAttribute("class", "octa-orgchart-block-label");
+      label.setAttribute("x", String(x + 12));
+      label.setAttribute("y", String(y + HEADER_H / 2 + 3));
+      label.textContent = dept ? `${dept} (${employees.length})` : `Sin departamento (${employees.length})`;
+      blocksG.appendChild(label);
+
+      // Centro del header para conectores
+      const headerCenterX = x + width / 2;
+      const headerCenterY = y + HEADER_H;
+
+      // Conector desde header padre → este header (si hay parentHeaderCenter)
+      if (parentHeaderCenter) {
+        const path = document.createElementNS(NS, "path");
+        path.setAttribute("class", "octa-block-member-path");
+        const midY = (parentHeaderCenter.y + headerCenterY) / 2;
+        path.setAttribute(
+          "d",
+          `M ${parentHeaderCenter.x} ${parentHeaderCenter.y} V ${midY} H ${headerCenterX} V ${headerCenterY}`,
+        );
+        edges.appendChild(path);
+      }
+
+      // Tarjetas de empleados dentro del bloque
+      let cardY = y + HEADER_H + BLOCK_PAD;
+      for (const emp of employees) {
+        const cardX = x + BLOCK_PAD;
+        const cardW = width - BLOCK_PAD * 2;
+
+        // Fondo tarjeta
+        const cardBg = document.createElementNS(NS, "rect");
+        cardBg.setAttribute("x", String(cardX));
+        cardBg.setAttribute("y", String(cardY));
+        cardBg.setAttribute("width", String(cardW));
+        cardBg.setAttribute("height", String(CARD_H));
+        cardBg.setAttribute("rx", "6");
+        cardBg.setAttribute("fill", "var(--background-secondary)");
+        cardBg.setAttribute("stroke", "var(--background-modifier-border)");
+        blocksG.appendChild(cardBg);
+
+        // Avatar (círculo con iniciales)
+        const initials = emp.name
+          .split(/\s+/)
+          .map((p) => p[0] ?? "")
+          .slice(0, 2)
+          .join("")
+          .toUpperCase();
+        const circle = document.createElementNS(NS, "circle");
+        circle.setAttribute("cx", String(cardX + 24));
+        circle.setAttribute("cy", String(cardY + CARD_H / 2));
+        circle.setAttribute("r", "15");
+        circle.setAttribute("class", "octa-orgchart-nodes circle");
+        blocksG.appendChild(circle);
+
+        const initialsText = document.createElementNS(NS, "text");
+        initialsText.setAttribute("class", "octa-orgchart-initials octa-orgchart-text");
+        initialsText.setAttribute("x", String(cardX + 24));
+        initialsText.setAttribute("y", String(cardY + CARD_H / 2 + 4));
+        initialsText.setAttribute("text-anchor", "middle");
+        initialsText.textContent = initials;
+        blocksG.appendChild(initialsText);
+
+        // Nombre
+        const nameText = document.createElementNS(NS, "text");
+        nameText.setAttribute("class", "octa-orgchart-name octa-orgchart-text");
+        nameText.setAttribute("x", String(cardX + 48));
+        nameText.setAttribute("y", String(cardY + CARD_H / 2 - 6));
+        nameText.textContent = emp.name;
+        blocksG.appendChild(nameText);
+
+        // Puesto
+        if (emp.position) {
+          const roleText = document.createElementNS(NS, "text");
+          roleText.setAttribute("class", "octa-orgchart-role octa-orgchart-text");
+          roleText.setAttribute("x", String(cardX + 48));
+          roleText.setAttribute("y", String(cardY + CARD_H / 2 + 10));
+          roleText.textContent = emp.position;
+          blocksG.appendChild(roleText);
+        }
+
+        // Conector header de bloque → tarjeta (member path)
+        const cardCenterX = cardX + cardW / 2;
+        const cardTopY = cardY;
+        const path = document.createElementNS(NS, "path");
+        path.setAttribute("class", "octa-block-member-path");
+        const midY = (headerCenterY + cardTopY) / 2;
+        path.setAttribute(
+          "d",
+          `M ${headerCenterX} ${headerCenterY} V ${midY} H ${cardCenterX} V ${cardTopY}`,
+        );
+        edges.appendChild(path);
+
+        cardY += CARD_H + CARD_GAP;
+      }
+
+      // Renderizar sub-bloques recursivamente
+      for (const childBlock of childrenBlocks) {
+        renderBlock(childBlock, { x: headerCenterX, y: headerCenterY });
+      }
+    };
+
+    for (const rootBlock of rootBlocks) renderBlock(rootBlock);
   }
 
   // ── Tab 2: Planilla ────────────────────────────────────────────────
@@ -401,9 +637,15 @@ export class EmployeeModal extends Modal {
   private contractType: ContractType;
   private position: string;
   private managerId: string;
+  private department: string;
+  private phone: string;
+  private email: string;
+  private photoPath: string;
+  private cvPath: string;
   private responsibilities: Set<string>;
 
   private errorsEl!: HTMLElement;
+  private attachmentsEl!: HTMLElement;
 
   constructor(
     app: App,
@@ -423,6 +665,11 @@ export class EmployeeModal extends Modal {
     this.baseSalaryRaw = e ? toDecimalString(e.baseSalary) : "";
     this.contractType = e?.contractType ?? "fijo";
     this.position = e?.position ?? "";
+    this.department = e?.department ?? "";
+    this.phone = e?.phone ?? "";
+    this.email = e?.email ?? "";
+    this.photoPath = e?.photoPath ?? "";
+    this.cvPath = e?.cvPath ?? "";
     const currentManager = e?.managerId ?? "";
     const managerAvailable = options.managers.some((m) => m.id === currentManager);
     if (currentManager && !managerAvailable) {
@@ -448,6 +695,20 @@ export class EmployeeModal extends Modal {
       .setName("NIT / CUI")
       .setDesc("Opcional. Se imprime en los comprobantes de nómina.")
       .addText((t) => t.setPlaceholder("12345678").setValue(this.taxId).onChange((v) => (this.taxId = v)));
+
+    new Setting(contentEl)
+      .setName("Celular (móvil personal)")
+      .setDesc("Opcional. Contacto del empleado. El móvil corporativo asignado se registra en el inventario de equipos.")
+      .addText((t) =>
+        t.setPlaceholder("+502 5555 1234").setValue(this.phone).onChange((v) => (this.phone = v)),
+      );
+
+    new Setting(contentEl)
+      .setName("Email")
+      .setDesc("Opcional. Contacto del empleado (personal o corporativo).")
+      .addText((t) =>
+        t.setPlaceholder("empleado@empresa.gt").setValue(this.email).onChange((v) => (this.email = v)),
+      );
 
     new Setting(contentEl).setName("Fecha de contratación").addText((t) => {
       t.inputEl.type = "date";
@@ -477,6 +738,13 @@ export class EmployeeModal extends Modal {
       d.setValue(this.managerId).onChange((v) => (this.managerId = v));
     });
 
+    new Setting(contentEl)
+      .setName("Departamento / Área")
+      .setDesc("Opcional. Se usa para agrupar el organigrama por área.")
+      .addText((t) =>
+        t.setPlaceholder("Operaciones").setValue(this.department).onChange((v) => (this.department = v)),
+      );
+
     contentEl.createEl("h4", { text: "Responsabilidades", cls: "octa-group" });
     const checklist = contentEl.createDiv({ cls: "octa-checklist" });
     for (const responsibility of STANDARD_RESPONSIBILITIES) {
@@ -488,6 +756,12 @@ export class EmployeeModal extends Modal {
         else this.responsibilities.delete(responsibility);
       };
       item.createSpan({ text: responsibility });
+    }
+
+    if (this.options.existing) {
+      contentEl.createEl("h4", { text: "Expediente", cls: "octa-group" });
+      this.attachmentsEl = contentEl.createDiv({ cls: "octa-attachments" });
+      this.renderAttachments();
     }
 
     this.errorsEl = contentEl.createDiv({ cls: "octa-form-errors" });
@@ -517,7 +791,10 @@ export class EmployeeModal extends Modal {
       hireDate: this.hireDate,
       ...(baseSalary ? { baseSalary } : {}),
       ...(this.taxId.trim() ? { taxId: this.taxId.trim() } : {}),
+      ...(this.phone.trim() ? { phone: this.phone.trim() } : {}),
+      ...(this.email.trim() ? { email: this.email.trim() } : {}),
       ...(this.position.trim() ? { position: this.position.trim() } : {}),
+      ...(this.department.trim() ? { department: this.department.trim() } : {}),
       ...(this.managerId ? { managerId: this.managerId } : {}),
       ...(this.responsibilities.size > 0
         ? { responsibilities: [...this.responsibilities].sort() }
@@ -539,12 +816,81 @@ export class EmployeeModal extends Modal {
       hireDate: draft.hireDate!,
       baseSalary: draft.baseSalary!,
       ...(draft.taxId ? { taxId: draft.taxId } : {}),
+      ...(draft.phone ? { phone: draft.phone } : {}),
+      ...(draft.email ? { email: draft.email } : {}),
+      ...(draft.department ? { department: draft.department } : {}),
       position: draft.position,
       managerId: draft.managerId,
       responsibilities: draft.responsibilities ?? [],
       contractType: draft.contractType!,
+      ...(this.photoPath ? { photoPath: this.photoPath } : {}),
+      ...(this.cvPath ? { cvPath: this.cvPath } : {}),
     };
     if (await this.options.onSubmit(complete)) this.close();
+  }
+
+  private renderAttachments(): void {
+    this.attachmentsEl.empty();
+    this.attachmentRow("Foto", "image/*", this.photoPath, (p) => (this.photoPath = p), "Subir foto", "Foto");
+    this.attachmentRow("CV (PDF)", "application/pdf", this.cvPath, (p) => (this.cvPath = p), "Subir CV", "CV");
+  }
+
+  private attachmentRow(
+    label: string,
+    accept: string,
+    value: string,
+    set: (path: string) => void,
+    buttonText: string,
+    noticeLabel: string,
+  ): void {
+    const row = this.attachmentsEl.createDiv({ cls: "octa-attachment-row" });
+    row.createSpan({ cls: "octa-attachment-label", text: label });
+    if (value) {
+      const name = value.split("/").pop() ?? value;
+      row.createSpan({ cls: "octa-attachment-name", text: name, title: value });
+    } else {
+      row.createSpan({ cls: "octa-attachment-name octa-subtle", text: "Sin adjuntar" });
+    }
+    row.createEl("button", { text: buttonText }).onclick = () =>
+      this.pickAttachment(accept, set, noticeLabel);
+  }
+
+  private async pickAttachment(
+    accept: string,
+    set: (path: string) => void,
+    label: string,
+  ): Promise<void> {
+    const existing = this.options.existing;
+    if (!existing) return;
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = accept;
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      const ext = (file.name.split(".").pop() ?? (accept === "application/pdf" ? "pdf" : "jpg")).toLowerCase();
+      const dir = `octasuite-data/employees/${existing.id}`;
+      const fileName = accept === "application/pdf" ? `cv.${ext}` : `foto.${ext}`;
+      const path = `${dir}/${fileName}`;
+      try {
+        if (!(this.app.vault.getAbstractFileByPath(dir) instanceof TFile)) {
+          await this.app.vault.createFolder(dir);
+        }
+        const data = await file.arrayBuffer();
+        const existingFile = this.app.vault.getAbstractFileByPath(path);
+        if (existingFile instanceof TFile) {
+          await this.app.vault.adapter.writeBinary(existingFile.path, data);
+        } else {
+          await this.app.vault.createBinary(path, data);
+        }
+        set(path);
+        this.renderAttachments();
+        new Notice(`${label} guardada en el vault`);
+      } catch (err) {
+        new Notice(`No se pudo guardar el adjunto: ${String(err)}`);
+      }
+    };
+    input.click();
   }
 
   override onClose(): void {

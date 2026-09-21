@@ -1,7 +1,11 @@
 import { mergeJournals, serializeEvent, type AnyEvent, type ParseResult } from "@octasuite/core";
 import type { DataAdapter, Vault } from "obsidian";
 
-export const DEFAULT_COMPANY_ID = "principal";
+// Fuente única de `DEFAULT_COMPANY_ID` en company-selection.ts (lógica pura);
+// vault-journal la re-exporta para no romper a los consumidores existentes
+// (settings, main, company-switcher, reports, tests).
+import { DEFAULT_COMPANY_ID } from "../company-selection.js";
+export { DEFAULT_COMPANY_ID } from "../company-selection.js";
 
 /**
  * Cuantos eventos de la particion activa y del legacy plano. Un journal

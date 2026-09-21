@@ -12,11 +12,20 @@ import {
 import { canTransition, type Expense, type ExpenseStatus } from "./domain/expense.js";
 import {
   assertCreditable,
+  assertRefundable,
   computeInvoiceTotals,
+  computeLineTotals,
+  type CreditNoteType,
+  type ExchangeLine,
   formatInvoiceNumber,
   lineDiscountAmount,
+  type TenderRefund,
   type CreditNote,
+  type StoredCreditNote,
+  type CreditNoteDraft,
   type Invoice,
+  validateCreditNoteDraft,
+  verifyTotals,
 } from "./domain/invoice.js";
 import {
   PRIMARY_LOCATION_ID,
@@ -43,11 +52,18 @@ import {
   type Employee,
   type PayrollRun,
 } from "./domain/payroll.js";
+import {
+  DEFAULT_EQUIPMENT_STATUS,
+  validateEquipmentDraft,
+  type Equipment,
+  type EquipmentAssignment,
+} from "./domain/equipment.js";
 import type { Product } from "./domain/product.js";
 import { isCashMethod, type CashMovement, type Shift, type ShiftSummary } from "./domain/register.js";
 import { explodeLine, isKit, type Receipt, type StockAdjustment } from "./domain/stock.js";
 import { DomainError } from "./errors.js";
 import type { AnyEvent } from "./events.js";
+import { generateId } from "./ids.js";
 import { add, format, subtract, sum, zero, type CurrencyCode, type Money } from "./money.js";
 
 export interface Category {
@@ -63,7 +79,7 @@ export interface State {
   readonly products: Map<string, Product>;
   readonly categories: Map<string, Category>;
   readonly invoices: Map<string, Invoice>;
-  readonly creditNotes: Map<string, CreditNote>;
+  readonly creditNotes: Map<string, StoredCreditNote>;
   readonly shifts: Map<string, Shift>;
   readonly movements: Map<string, CashMovement>;
   readonly receipts: Map<string, Receipt>;
@@ -82,6 +98,12 @@ export interface State {
   readonly journalEntries: Map<string, JournalEntry>;
   /** Ultimo correlativo visto por serie. */
   readonly lastNumberBySeries: Map<string, number>;
+  /**
+   * Índice de correlativos emitidos: `${series}|${number}` → invoiceId.
+   * Mantiene el chequeo de duplicados en O(1); escanear todas las facturas
+   * por emisión hacía la proyección O(n²) (inusable con journals grandes).
+   */
+  readonly issuedNumberIndex: Map<string, string>;
   /** Empleados de nómina. */
   readonly employees: Map<string, Employee>;
   /** Períodos de nómina procesados. */
@@ -90,6 +112,10 @@ export interface State {
   readonly locations: Map<string, InventoryLocation>;
   /** Traslados entre ubicaciones. */
   readonly transfers: Map<string, StockTransfer>;
+  /** Equipos de uso empresarial (activos). */
+  readonly equipment: Map<string, Equipment>;
+  /** Historial de asignaciones de equipos a empleados. */
+  readonly equipmentAssignments: Map<string, EquipmentAssignment[]>;
   /** Empresas (multi-empresa). */
   readonly companies: Map<string, Company>;
   /** Tasas de cambio vigentes por par+moneda. */
@@ -117,10 +143,13 @@ export function emptyState(): State {
     accounts: new Map(),
     journalEntries: new Map(),
     lastNumberBySeries: new Map(),
+    issuedNumberIndex: new Map(),
     employees: new Map(),
     payrollRuns: new Map(),
     locations: new Map(),
     transfers: new Map(),
+    equipment: new Map(),
+    equipmentAssignments: new Map(),
     companies: new Map(),
     rates: new Map(),
   };
@@ -394,13 +423,20 @@ export function apply(state: State, event: AnyEvent): RejectedEvent | null {
     case "invoice.issued": {
       const p = event.payload;
       if (state.invoices.has(p.invoiceId)) return reject("duplicate", `La factura ${p.invoiceId} ya existe`);
-      const clash = [...state.invoices.values()].find((i) => i.series === p.series && i.number === p.number);
-      if (clash) {
+      const numberKey = `${p.series}|${p.number}`;
+      const clashId = state.issuedNumberIndex.get(numberKey);
+      if (clashId) {
         return reject(
           "number_taken",
-          `El correlativo ${formatInvoiceNumber(p.series, p.number)} ya lo usa ${clash.id}; hay que renumerar`,
+          `El correlativo ${formatInvoiceNumber(p.series, p.number)} ya lo usa ${clashId}; hay que renumerar`,
         );
       }
+      const drift = verifyTotals(p.lines, p.currency, {
+        untaxed: p.totals.untaxed,
+        tax: p.totals.tax,
+        total: p.totals.total,
+      });
+      if (drift) return reject(drift.code, drift.message);
       const derived = computeInvoiceTotals(p.lines, p.currency);
       state.invoices.set(p.invoiceId, {
         id: p.invoiceId,
@@ -422,6 +458,7 @@ export function apply(state: State, event: AnyEvent): RejectedEvent | null {
       });
       const last = state.lastNumberBySeries.get(p.series);
       if (last === undefined || p.number > last) state.lastNumberBySeries.set(p.series, p.number);
+      state.issuedNumberIndex.set(numberKey, p.invoiceId);
       return null;
     }
     case "invoice.paid": {
@@ -461,6 +498,139 @@ export function apply(state: State, event: AnyEvent): RejectedEvent | null {
         creditedTotal: add(current.creditedTotal, p.amount),
         creditNoteIds: [...current.creditNoteIds, p.creditNoteId],
       });
+      return null;
+    }
+    case "invoice.refunded": {
+      const p = event.payload;
+      const current = state.invoices.get(p.invoiceId);
+      if (!current) return reject("not_found", `Factura inexistente: ${p.invoiceId}`);
+      if (state.creditNotes.has(p.creditNoteId)) return reject("duplicate", `La nota ${p.creditNoteId} ya existe`);
+
+      // Validar draft extendido
+      const draft: CreditNoteDraft = {
+        type: p.type,
+        amount: p.amount,
+        reason: p.reason,
+        lines: p.lines,
+        tenderRefund: p.tenderRefund,
+        stockReturnLocationId: p.stockReturnLocationId,
+        exchangeLines: p.exchangeLines,
+      };
+      const problems = validateCreditNoteDraft(draft);
+      if (problems.length > 0) {
+        return reject(problems[0]!.code, problems[0]!.message);
+      }
+
+      try {
+        assertRefundable(current, p.amount);
+      } catch (e) {
+        if (e instanceof DomainError) return reject(e.code, e.message);
+        throw e;
+      }
+
+      // Guardar credit note extendida (campos nuevos en objeto plano)
+      const creditNote: CreditNote & {
+        type?: CreditNoteType;
+        lines?: typeof p.lines;
+        tenderRefund?: TenderRefund;
+        stockReturnLocationId?: string;
+        exchangeLines?: typeof p.exchangeLines;
+      } = {
+        id: p.creditNoteId,
+        invoiceId: p.invoiceId,
+        date: p.date,
+        amount: p.amount,
+        reason: p.reason,
+        createdAt: event.at,
+        type: p.type,
+        lines: p.lines,
+        tenderRefund: p.tenderRefund,
+        stockReturnLocationId: p.stockReturnLocationId,
+        exchangeLines: p.exchangeLines,
+      };
+      state.creditNotes.set(p.creditNoteId, creditNote);
+      state.invoices.set(current.id, {
+        ...current,
+        creditedTotal: add(current.creditedTotal, p.amount),
+        creditNoteIds: [...current.creditNoteIds, p.creditNoteId],
+      });
+
+// 1) Stock return: si hay líneas devueltas, crear ajuste/traslado a ubicación
+      if (p.lines && p.lines.length > 0) {
+        const locationId = p.stockReturnLocationId ?? PRIMARY_LOCATION_ID;
+        for (const [i, line] of p.lines.entries()) {
+          const adjustmentId = `adj_${p.creditNoteId}_${i}`;
+          state.adjustments.set(adjustmentId, {
+            id: adjustmentId,
+            date: p.date,
+            productId: line.productId,
+            quantity: line.quantity,
+            reason: "Devolución de cliente",
+            createdAt: event.at,
+          });
+        }
+      }
+
+      // 2) Tender refund: asiento contable doble partida (Caja/Banco -> Clientes)
+      if (p.tenderRefund) {
+        const tenderAccount = findTenderAccount(state, p.tenderRefund.method);
+        const arAccount = findARAccount(state);
+        if (tenderAccount && arAccount) {
+          const entry: JournalEntry = {
+            id: `je_${p.creditNoteId}`,
+            date: p.date,
+            description: `Reembolso ${p.tenderRefund.method} por nota ${p.creditNoteId}`,
+            reference: p.creditNoteId,
+            lines: [
+              { accountId: tenderAccount.id, debit: zero(p.tenderRefund.amount.currency), credit: p.tenderRefund.amount, description: `Salida ${p.tenderRefund.method}` },
+              { accountId: arAccount.id, debit: p.tenderRefund.amount, credit: zero(p.tenderRefund.amount.currency), description: `Reducción clientes por devolución` },
+            ],
+            status: "posted",
+            postedAt: event.at,
+            createdAt: event.at,
+          };
+          if (!isBalanced(entry, p.tenderRefund.amount.currency)) {
+            return reject("unbalanced_entry", "El asiento de reembolso no cuadra");
+          }
+          state.journalEntries.set(entry.id, entry);
+        }
+      }
+
+      // 3) Store credit: abono a cuenta de crédito del cliente
+      if (p.type === "store_credit" || !p.type) {
+        const partnerId = current.partnerId ?? "";
+        const creditAccount = creditAccountByPartner(state, partnerId);
+        const accountId = creditAccount?.id ?? `cra_${partnerId}`;
+        state.creditAccounts.set(accountId, {
+          ...creditAccount,
+          id: accountId,
+          partnerId,
+          partnerName: current.partnerName,
+          balances: new Map(creditAccount?.balances ?? []).set(
+            p.amount.currency,
+            add(creditAccount?.balances.get(p.amount.currency) ?? zero(p.amount.currency), p.amount),
+          ),
+          createdAt: creditAccount?.createdAt ?? event.at,
+          updatedAt: event.at,
+        });
+        const transactionId = `crt_${p.creditNoteId}`;
+        state.creditTransactions.set(transactionId, {
+          id: transactionId,
+          accountId,
+          type: "added",
+          amount: p.amount,
+          reference: p.creditNoteId,
+          note: p.reason,
+          createdAt: event.at,
+        });
+      }
+
+      // 4) Exchange: líneas de cambio (productos nuevos) - crear factura vinculada o nota
+      if (p.exchangeLines && p.exchangeLines.length > 0) {
+        // Por ahora: registrar como líneas de exchange en la nota; no genera factura automática
+        // (requeriría flujo de emisión nuevo; se deja como dato para UI)
+      }
+
       return null;
     }
 
@@ -949,6 +1119,100 @@ export function apply(state: State, event: AnyEvent): RejectedEvent | null {
       return null;
     }
 
+    case "equipment.created": {
+      const { equipmentId, ...draft } = event.payload;
+      if (state.equipment.has(equipmentId)) return reject("duplicate", `El equipo ${equipmentId} ya existe`);
+      const eqProblems = validateEquipmentDraft(draft);
+      const eqProblem = eqProblems[0];
+      if (eqProblem) return reject(eqProblem.code, eqProblem.message);
+      if (draft.clientId) {
+        const client = state.partners.get(draft.clientId);
+        if (!client) return reject("equipment.client_not_found", `Cliente asignado inexistente: ${draft.clientId}`);
+      }
+      for (const existing of state.equipment.values()) {
+        if (!existing.archived && existing.serial === draft.serial) {
+          return reject("equipment.duplicate_serial", `El serial ${draft.serial} ya está registrado`);
+        }
+      }
+      state.equipment.set(equipmentId, {
+        id: equipmentId,
+        ...draft,
+        status: draft.status ?? DEFAULT_EQUIPMENT_STATUS,
+        archived: false,
+        createdAt: event.at,
+        updatedAt: event.at,
+      });
+      return null;
+    }
+    case "equipment.updated": {
+      const { equipmentId, changes } = event.payload;
+      const current = state.equipment.get(equipmentId);
+      if (!current) return reject("not_found", `Equipo inexistente: ${equipmentId}`);
+      if (current.archived) return reject("archived", "El equipo está dado de baja");
+      const updated = { ...current, ...changes, id: current.id, updatedAt: event.at };
+      const eqProblems = validateEquipmentDraft(updated);
+      const eqProblem = eqProblems[0];
+      if (eqProblem) return reject(eqProblem.code, eqProblem.message);
+      if (updated.clientId) {
+        const client = state.partners.get(updated.clientId);
+        if (!client) return reject("equipment.client_not_found", `Cliente asignado inexistente: ${updated.clientId}`);
+      }
+      for (const existing of state.equipment.values()) {
+        if (existing.id !== current.id && !existing.archived && existing.serial === updated.serial) {
+          return reject("equipment.duplicate_serial", `El serial ${updated.serial} ya está registrado`);
+        }
+      }
+      state.equipment.set(current.id, updated);
+      return null;
+    }
+    case "equipment.archived": {
+      const current = state.equipment.get(event.payload.equipmentId);
+      if (!current) return reject("not_found", `Equipo inexistente: ${event.payload.equipmentId}`);
+      if (current.archived) return reject("already_archived", "El equipo ya estaba dado de baja");
+      state.equipment.set(current.id, { ...current, archived: true, updatedAt: event.at });
+      return null;
+    }
+    case "equipment.assigned": {
+      const p = event.payload;
+      const eq = state.equipment.get(p.equipmentId);
+      if (!eq) return reject("not_found", `Equipo inexistente: ${p.equipmentId}`);
+      if (eq.archived) return reject("archived", "El equipo está dado de baja");
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(p.assignedAt)) {
+        return reject("equipment.bad_date", `Fecha de asignación inválida: ${p.assignedAt}`);
+      }
+      const employee = state.employees.get(p.employeeId);
+      if (!employee) return reject("equipment.employee_not_found", `Empleado inexistente: ${p.employeeId}`);
+      if (employee.archived) return reject("equipment.employee_archived", "El empleado está archivado");
+      if (activeEquipmentAssignment(state, p.equipmentId)) {
+        return reject("equipment.already_assigned", "El equipo ya está asignado");
+      }
+      const list = state.equipmentAssignments.get(p.equipmentId) ?? [];
+      state.equipmentAssignments.set(p.equipmentId, [
+        ...list,
+        { equipmentId: p.equipmentId, employeeId: p.employeeId, assignedAt: p.assignedAt, note: p.note },
+      ]);
+      return null;
+    }
+    case "equipment.returned": {
+      const p = event.payload;
+      const eq = state.equipment.get(p.equipmentId);
+      if (!eq) return reject("not_found", `Equipo inexistente: ${p.equipmentId}`);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(p.returnedAt)) {
+        return reject("equipment.bad_date", `Fecha de devolución inválida: ${p.returnedAt}`);
+      }
+      const list = state.equipmentAssignments.get(p.equipmentId) ?? [];
+      const active = activeEquipmentAssignment(state, p.equipmentId);
+      if (!active) return reject("equipment.not_assigned", "El equipo no tiene asignación activa");
+      if (p.returnedAt < active.assignedAt) {
+        return reject("equipment.bad_return_date", "La devolución no puede ser anterior a la asignación");
+      }
+      state.equipmentAssignments.set(
+        p.equipmentId,
+        list.map((a) => (a === active ? { ...a, returnedAt: p.returnedAt, note: p.note ?? a.note } : a)),
+      );
+      return null;
+    }
+
     case "company.created": {
       const { companyId, ...draft } = event.payload;
       if (state.companies.has(companyId)) return reject("duplicate", `La empresa ${companyId} ya existe`);
@@ -1007,6 +1271,12 @@ export function apply(state: State, event: AnyEvent): RejectedEvent | null {
       });
       return null;
     }
+
+    default: {
+      const unknown = event as { type: string };
+      const _exhaustive: never = event;
+      return reject("unknown_event", `Evento desconocido: ${unknown.type}`);
+    }
   }
 }
 
@@ -1015,14 +1285,52 @@ export interface Projection {
   readonly rejected: RejectedEvent[];
 }
 
+/**
+ * Proyecta el journal completo a estado.
+ *
+ * Tolerante a dependencias no resueltas: como los eventos se procesan por `at`,
+ * un `invoice.paid`/`invoice.refunded` cuyo `at` es anterior al de su
+ * `invoice.issued` (sync entre dispositivos, relojes desincronizados) fallaria
+ * con `not_found` aunque la entidad SI llega mas tarde en el journal. Por eso la
+ * proyeccion reintenta por pasadas: los eventos que fallan con `not_found` se
+ * difieren a la pasada siguiente; solo se reportan como rechazados cuando dejan
+ * de resolverse (sin progreso entre pasadas) — un refund de una factura que
+ * nunca se emite sigue siendo un rechazo real.
+ */
 export function project(events: readonly AnyEvent[]): Projection {
   const state = emptyState();
-  const rejected: RejectedEvent[] = [];
-  for (const event of events) {
-    const problem = apply(state, event);
-    if (problem) rejected.push(problem);
+  const rejectedByPos: { problem: RejectedEvent; pos: number }[] = [];
+  let pending: { event: AnyEvent; pos: number }[] = events.map((event, pos) => ({ event, pos }));
+  while (pending.length > 0) {
+    const nextPending: { event: AnyEvent; pos: number }[] = [];
+    const nextProblems: { problem: RejectedEvent; pos: number }[] = [];
+    let progress = false;
+    for (const { event, pos } of pending) {
+      const problem = apply(state, event);
+      if (!problem) {
+        progress = true;
+        continue;
+      }
+      if (problem.code === "not_found") {
+        // Dependencia quizas no resuelta aun: reintentar en la pasada siguiente.
+        nextPending.push({ event, pos });
+        nextProblems.push({ problem, pos });
+        continue;
+      }
+      rejectedByPos.push({ problem, pos });
+    }
+    if (nextPending.length === 0) break;
+    if (!progress) {
+      // Ningun evento se aplico: los pendientes son rechazos definitivos.
+      rejectedByPos.push(...nextProblems);
+      break;
+    }
+    pending = nextPending;
   }
-  return { state, rejected };
+  // Los rechazados se reportan en el orden original del journal, no en el orden
+  // en que cada pasada los resolvio (contrato observable estable).
+  rejectedByPos.sort((a, b) => a.pos - b.pos);
+  return { state, rejected: rejectedByPos.map((x) => x.problem) };
 }
 
 // ---------------------------------------------------------------------------
@@ -1171,6 +1479,22 @@ export function creditNotesFor(state: State, invoiceId: string): CreditNote[] {
   return invoice.creditNoteIds
     .map((id) => state.creditNotes.get(id))
     .filter((note): note is CreditNote => note !== undefined);
+}
+
+/**
+ * Todas las notas de crédito de la empresa activa, más recientes primero.
+ * Devuelve el tipo extendido `StoredCreditNote` para que la vista pueda
+ * distinguir store_credit/refund/exchange sin re-proyectar nada.
+ */
+export function allCreditNotes(state: State): StoredCreditNote[] {
+  return [...state.creditNotes.values()].sort((a, b) =>
+    b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt),
+  );
+}
+
+/** Notas de crédito emitidas en un mes (`YYYY-MM`), más recientes primero. */
+export function creditNotesInPeriod(state: State, month: MonthKey): StoredCreditNote[] {
+  return allCreditNotes(state).filter((n) => monthKeyOf(n.date) === month);
 }
 
 /** Saldo vivo del documento: total menos lo acreditado. No descuenta el pago. */
@@ -1429,6 +1753,7 @@ export interface ReceiptLineData {
   readonly description: string;
   readonly quantity: number;
   readonly unitPrice: Money;
+  readonly discount: Money;
   readonly taxRate: number;
   readonly subtotal: Money;
   readonly tax: Money;
@@ -1466,10 +1791,17 @@ export function receiptData(
   footer: string,
 ): ReceiptData {
   const lines: ReceiptLineData[] = invoice.lines.map((line) => {
-    const subtotal = { minor: line.unitPrice.minor * line.quantity, currency: line.unitPrice.currency } as Money;
-    const tax = { minor: Math.round((subtotal.minor * line.taxRate) / 100), currency: line.unitPrice.currency } as Money;
-    const total = { minor: subtotal.minor + tax.minor, currency: line.unitPrice.currency } as Money;
-    return { description: line.description, quantity: line.quantity, unitPrice: line.unitPrice, taxRate: line.taxRate, subtotal, tax, total };
+    const totals = computeLineTotals(line);
+    return {
+      description: line.description,
+      quantity: line.quantity,
+      unitPrice: line.unitPrice,
+      discount: lineDiscountAmount(line),
+      taxRate: line.taxRate,
+      subtotal: totals.untaxed,
+      tax: totals.tax,
+      total: totals.total,
+    };
   });
 
   return {
@@ -1649,7 +1981,38 @@ export function payrollRunsInMonth(state: State, month: MonthKey): PayrollRun[] 
 export function employeePayrollRuns(state: State, employeeId: string): PayrollRun[] {
   return [...state.payrollRuns.values()]
     .filter((r) => r.lines.some((l) => l.employeeId === employeeId))
-    .sort((a, b) => a.processedAt.localeCompare(b.processedAt));
+    .sort((a, b) => a.month.localeCompare(b.month));
+}
+
+/** Equipos activos (excluye dados de baja). */
+export function activeEquipment(state: State): Equipment[] {
+  return [...state.equipment.values()].filter((e) => !e.archived);
+}
+
+export function equipmentById(state: State, equipmentId: string): Equipment | undefined {
+  return state.equipment.get(equipmentId);
+}
+
+/** Asignación vigente de un equipo (la última sin devolución). */
+export function activeEquipmentAssignment(state: State, equipmentId: string): EquipmentAssignment | undefined {
+  const list = state.equipmentAssignments.get(equipmentId) ?? [];
+  return [...list].reverse().find((a) => !a.returnedAt);
+}
+
+/** Historial completo de asignaciones de un equipo. */
+export function assignmentsFor(state: State, equipmentId: string): EquipmentAssignment[] {
+  return [...(state.equipmentAssignments.get(equipmentId) ?? [])];
+}
+
+/** Equipos activos asignados hoy a un empleado. */
+export function equipmentByEmployee(state: State, employeeId: string): Equipment[] {
+  const out: Equipment[] = [];
+  for (const eq of state.equipment.values()) {
+    if (eq.archived) continue;
+    const active = activeEquipmentAssignment(state, eq.id);
+    if (active && active.employeeId === employeeId) out.push(eq);
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -1744,4 +2107,23 @@ export function rateFor(
     if (!best || r.date > best.date || (r.date === best.date && r.createdAt >= best.createdAt)) best = r;
   }
   return best;
+}
+
+/** Busca la cuenta contable asociada a un método de pago (tender). */
+function findTenderAccount(state: State, method: string): Account | undefined {
+  const methodLower = method.toLowerCase();
+  for (const acc of state.accounts.values()) {
+    const nameLower = acc.name.toLowerCase();
+    if (methodLower.includes("efectiv") && (nameLower.includes("caja") || nameLower.includes("efectiv"))) return acc;
+    if (methodLower.includes("tarjet") && nameLower.includes("banco")) return acc;
+    if (methodLower.includes("transfer") && nameLower.includes("banco")) return acc;
+    if (methodLower.includes("credito") && acc.type === "activo" && nameLower.includes("cobrar")) return acc;
+  }
+  // Fallback: primera cuenta de activo
+  return [...state.accounts.values()].find((a) => a.type === "activo");
+}
+
+/** Busca la cuenta de Cuentas por Cobrar (activo). */
+function findARAccount(state: State): Account | undefined {
+  return [...state.accounts.values()].find((a) => a.code === "1200" || (a.type === "activo" && a.name.toLowerCase().includes("cobrar")));
 }

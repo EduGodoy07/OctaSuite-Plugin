@@ -1,17 +1,18 @@
 import {
-  expensesVsPreviousWeekday,
+  consolidatedComparison,
+  consolidatedPendingApproval,
+  consolidatedTotalExpenses,
+  consolidatedTotalInvoiced,
+  consolidatedUnpaid,
   format,
   monthKeyOf,
-  pendingApprovalCount,
   toIsoDate,
-  totalExpenses,
-  totalInvoiced,
-  unpaidInvoices,
   type Comparison,
   type AnyEvent,
 } from "@octasuite/core";
 import { ItemView, setIcon, WorkspaceLeaf } from "obsidian";
 import { LAUNCHER_VIEW_TYPE, MODULES, moduleGroups, modulesIn, STATUS_LABEL, type ModuleDef } from "../modules.js";
+import { companyLabel, mountCompanySwitcher } from "./company-switcher.js";
 import type { PluginHost } from "./host.js";
 
 /**
@@ -48,10 +49,16 @@ export class LauncherView extends ItemView {
 
   private render(): void {
     const { contentEl } = this;
-    const { state, settings } = this.host;
+    const { settings } = this.host;
     const currency = settings.currency;
     const today = toIsoDate(new Date());
     const month = monthKeyOf(today);
+    // Indicadores consolidados: cada estado se proyecta por separado y las
+    // funciones `consolidated*` suman montos. NUNCA se mezclan estados (los
+    // ids de categoría/cliente son locales a cada partición). Con una sola
+    // empresa, consolidatedX([state]) == la función single por construcción.
+    const states = [...this.host.statesByCompany.values()];
+    const multi = states.length > 1;
 
     contentEl.empty();
     contentEl.addClass("octa");
@@ -60,16 +67,16 @@ export class LauncherView extends ItemView {
     header.createEl("h2", { text: "OctaSuite", cls: "octa-brand" });
     const period = header.createDiv({ cls: "octa-period" });
     period.createSpan({ text: month, cls: "octa-mono" });
-    void this.renderCompanySwitch(header);
+    mountCompanySwitcher(period, this.host);
     const addExpense = period.createEl("button", { text: "+ Gasto", cls: "mod-cta" });
     addExpense.onclick = () => this.host.openQuickAdd();
 
     // --- Indicadores ---
-    const facturado = totalInvoiced(state, month, currency);
-    const gastos = totalExpenses(state, month, currency);
-    const porCobrar = unpaidInvoices(state, month, currency);
-    const hoy = expensesVsPreviousWeekday(state, today, currency);
-    const pendientes = pendingApprovalCount(state);
+    const facturado = consolidatedTotalInvoiced(states, month, currency);
+    const gastos = consolidatedTotalExpenses(states, month, currency);
+    const porCobrar = consolidatedUnpaid(states, month, currency);
+    const hoy = consolidatedComparison(states, today, currency);
+    const pendientes = consolidatedPendingApproval(states);
 
     const kpis = contentEl.createDiv({ cls: "octa-kpis" });
     this.kpi(kpis, "Facturado", format(facturado, settings.locale));
@@ -78,6 +85,11 @@ export class LauncherView extends ItemView {
     this.kpi(kpis, "Por cobrar", format(porCobrar.amount, settings.locale), `${porCobrar.count} factura(s)`);
     this.kpiComparison(kpis, hoy, settings.locale);
     this.kpi(kpis, "Por aprobar", String(pendientes), pendientes === 1 ? "gasto" : "gastos");
+
+    if (multi) {
+      const note = contentEl.createDiv({ cls: "octa-footnote" });
+      note.setText(`Consolidando ${states.length} empresas: ${this.host.activeCompanyIds.map(companyLabel).join(", ")}`);
+    }
 
     const problems: string[] = [];
     if (this.host.rejectedCount > 0) {
@@ -105,28 +117,6 @@ export class LauncherView extends ItemView {
     const footer = contentEl.createDiv({ cls: "octa-footnote" });
     const ready = MODULES.filter((m) => m.status === "ready").length;
     footer.setText(`${ready} de ${MODULES.length} módulos disponibles en modo Personal.`);
-  }
-
-  /**
-   * Selector de empresa activa en la barra superior. Se alimenta del filesystem
-   * (journal.listCompanyIds()) y solo se muestra cuando hay más de una empresa.
-   * Al cambiar, el host reconstruye el estado con la partición nueva.
-   */
-  private async renderCompanySwitch(header: HTMLElement): Promise<void> {
-    const companies = await this.host.journalCompanies();
-    // La empresa activa siempre es una opción válida, aunque todavía no tenga
-    // datos (listCompanyIds solo lista las que ya tienen archivos).
-    const active = this.host.settings.activeCompanyId;
-    if (!companies.includes(active)) companies.unshift(active);
-    if (companies.length <= 1) return;
-
-    const select = header.createEl("select", { cls: "octa-company-switch" });
-    for (const companyId of companies) {
-      const label = companyId.charAt(0).toUpperCase() + companyId.slice(1);
-      select.createEl("option", { text: label, value: companyId });
-    }
-    select.value = active;
-    select.onchange = () => void this.host.setActiveCompany(select.value);
   }
 
   private kpi(parent: HTMLElement, label: string, value: string, hint?: string): void {

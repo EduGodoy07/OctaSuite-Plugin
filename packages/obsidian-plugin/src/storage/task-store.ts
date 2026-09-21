@@ -70,10 +70,29 @@ export class VaultTasks {
     const path = this.pathFor(task.id, scope);
     const data = serializeTask(task);
     const tf = this.vault.getAbstractFileByPath(path);
+    // Regresión 2026-09-16 (Antigravity #3): si la tarea cambió de scope,
+    // el archivo del scope anterior quedaba huérfano (duplicado invisible
+    // que listTasks del scope viejo seguía mostrando). Habiendo confirmado
+    // que los ids son únicos globalmente (generateId), eliminar cualquier
+    // archivo con el mismo id en otro scope es seguro.
+    await this.removeOrphanedScopeFiles(task.id, scope);
     // En la API Vault de Obsidian, `modify` actualiza un TFile existente y `create`
     // genera uno nuevo. Esto garantiza que Obsidian indexe y dispare eventos nativos de vault.
     if (tf instanceof TFile) await this.vault.modify(tf, data);
     else await this.vault.create(path, data);
+  }
+
+  /** Elimina archivos de la misma tarea en scopes distintos (cambio de ámbito). */
+  private async removeOrphanedScopeFiles(id: string, currentScope: string): Promise<void> {
+    const root = `${this.folder}/tasks`;
+    if (!(await this.adapter.exists(root))) return;
+    const listing = await this.adapter.list(root);
+    for (const folder of listing.folders) {
+      const scope = folder.slice(folder.lastIndexOf("/") + 1);
+      if (scope === currentScope) continue;
+      const stale = this.vault.getAbstractFileByPath(`${folder}/${id}.md`);
+      if (stale instanceof TFile) await this.vault.delete(stale);
+    }
   }
 
   /** Elimina el archivo de la tarea si existe. */
@@ -101,7 +120,7 @@ export class VaultTasks {
     const content = `# Obsidian Bases — Vista de Tareas OctaSuite
 filters:
   and:
-    - file.folder == "${this.folder}/tasks"
+    - file.path startsWith "${this.folder}/tasks/"
 views:
   - type: table
     name: Todas las tareas

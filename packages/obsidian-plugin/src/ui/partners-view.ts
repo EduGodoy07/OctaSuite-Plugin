@@ -191,6 +191,7 @@ export class PartnersView extends ItemView {
 
   private openEditor(existing?: Partner): void {
     new PartnerModal(this.app, {
+      host: this.host,
       ...(existing ? { existing } : {}),
       candidates: activePartners(this.host.state),
       onSubmit: async (draft) => {

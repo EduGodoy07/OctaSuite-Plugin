@@ -427,9 +427,8 @@ export class RegisterView extends ItemView {
 
         const authority = new LocalNumberAuthority(
           (series) => this.host.state.lastNumberBySeries.get(series),
-          "personal",
         );
-        const reserved = await authority.reserve(settings.invoiceSeries);
+        const reserved = authority.reserve(settings.invoiceSeries);
         const invoiceId = generateId("inv");
         const now = new Date().toISOString();
 

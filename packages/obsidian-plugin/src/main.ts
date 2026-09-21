@@ -26,6 +26,8 @@ import {
 import { App, Notice, Plugin, PluginSettingTab, Setting, type WorkspaceLeaf } from "obsidian";
 import {
   ACCOUNTING_VIEW_TYPE,
+  CREDIT_NOTES_VIEW_TYPE,
+  EQUIPMENT_VIEW_TYPE,
   EXPENSES_VIEW_TYPE,
   INVENTORY_VIEW_TYPE,
   INVOICES_VIEW_TYPE,
@@ -45,16 +47,26 @@ import {
   STATUS_LABEL,
   TASKS_VIEW_TYPE,
   VIEW_TYPE_PREFIX,
+  isOctaSuiteViewType,
   type ModuleDef,
 } from "./modules.js";
 import { DEFAULT_SETTINGS, type OctaSuiteSettings } from "./settings.js";
+import {
+  migrateActiveCompanyIds,
+  normalizeActiveCompanyIds,
+  sameActiveCompanyIds,
+} from "./company-selection.js";
 import { VaultCatalogs } from "./storage/vault-catalogs.js";
+import { VaultPricelists } from "./storage/vault-pricelists.js";
 import { VaultTasks } from "./storage/task-store.js";
 import { DEFAULT_COMPANY_ID, VaultJournal } from "./storage/vault-journal.js";
 import { ExpensesView } from "./ui/expenses-view.js";
 import type { PluginHost } from "./ui/host.js";
+import { mountCompanySwitcher } from "./ui/company-switcher.js";
 import { InvoicesView } from "./ui/invoices-view.js";
+import { CreditNotesView } from "./ui/credit-notes-view.js";
 import { InventoryView } from "./ui/inventory-view.js";
+import { EquipmentView } from "./ui/equipment-view.js";
 import { TasksView } from "./ui/tasks-view.js";
 import { LauncherView } from "./ui/launcher-view.js";
 import { LeadsView } from "./ui/leads-view.js";
@@ -86,13 +98,23 @@ const REFRESHABLE = [
   ACCOUNTING_VIEW_TYPE,
   PAYROLL_VIEW_TYPE,
   INVENTORY_VIEW_TYPE,
+  EQUIPMENT_VIEW_TYPE,
   TASKS_VIEW_TYPE,
 ] as const;
 
 export default class OctaSuitePlugin extends Plugin implements PluginHost {
   // `Plugin.settings?: unknown` existe desde la API 1.13; aquí se concreta el tipo.
   override settings: OctaSuiteSettings = DEFAULT_SETTINGS;
+  /** Estado de la empresa primaria (la primera de `activeCompanyIds`). Las vistas que escriben trabajan contra este. */
   state: State = emptyState();
+  /**
+   * Estados proyectados por empresa seleccionada. Launcher y reportes los
+   * consolidan con las funciones `consolidated*` del core; nunca se mezclan
+   * estados (los ids de categoría/cliente son locales a cada partición).
+   */
+  statesByCompany: Map<string, State> = new Map();
+  /** Selección efectiva de la última carga; para detectar cambios de selección en saveSettings. */
+  private previousActiveCompanyIds: string[] = [DEFAULT_COMPANY_ID];
   rejectedCount = 0;
   corruptCount = 0;
 
@@ -109,6 +131,16 @@ export default class OctaSuitePlugin extends Plugin implements PluginHost {
 
   private journal!: VaultJournal;
 
+  /** Empresas seleccionadas en orden (primera = primaria). Vista de lecturas para el selector. */
+  get activeCompanyIds(): readonly string[] {
+    return this.settings.activeCompanyIds;
+  }
+
+  /** ID de la empresa primaria: la primera de la selección (destino de escrituras). */
+  private get primaryCompanyId(): string {
+    return this.settings.activeCompanyIds[0] ?? DEFAULT_COMPANY_ID;
+  }
+
   private catalogsFolder = "";
   private catalogsInstance: VaultCatalogs | null = null;
 
@@ -124,6 +156,22 @@ export default class OctaSuitePlugin extends Plugin implements PluginHost {
       this.catalogsFolder = this.settings.dataFolder;
     }
     return this.catalogsInstance;
+  }
+
+  private pricelistsFolder = "";
+  private pricelistsInstance: VaultPricelists | null = null;
+
+  /**
+   * Instancia unica del catalogo de listas de precios del vault (B-03): el
+   * gestor (modal) escribe y las facturas leen la misma instancia. Mismo
+   * patron de `catalogs`: se recrea si cambia la carpeta configurada.
+   */
+  get pricelists(): VaultPricelists {
+    if (!this.pricelistsInstance || this.pricelistsFolder !== this.settings.dataFolder) {
+      this.pricelistsInstance = new VaultPricelists(this.settings.dataFolder, this.app.vault.adapter);
+      this.pricelistsFolder = this.settings.dataFolder;
+    }
+    return this.pricelistsInstance;
   }
 
   private tasksFolder = "";
@@ -153,6 +201,7 @@ export default class OctaSuitePlugin extends Plugin implements PluginHost {
     this.registerView(PARTNERS_VIEW_TYPE, (leaf: WorkspaceLeaf) => new PartnersView(leaf, this));
     this.registerView(PRODUCTS_VIEW_TYPE, (leaf: WorkspaceLeaf) => new ProductsView(leaf, this));
     this.registerView(INVOICES_VIEW_TYPE, (leaf: WorkspaceLeaf) => new InvoicesView(leaf, this));
+    this.registerView(CREDIT_NOTES_VIEW_TYPE, (leaf: WorkspaceLeaf) => new CreditNotesView(leaf, this));
     this.registerView(RECEIPTS_VIEW_TYPE, (leaf: WorkspaceLeaf) => new ReceiptsView(leaf, this));
     this.registerView(PAYMENT_RECEIPT_VIEW_TYPE, (leaf: WorkspaceLeaf) => new ReceiptView(leaf, this));
     this.registerView(REGISTER_VIEW_TYPE, (leaf: WorkspaceLeaf) => new RegisterView(leaf, this));
@@ -162,6 +211,7 @@ export default class OctaSuitePlugin extends Plugin implements PluginHost {
     this.registerView(ACCOUNTING_VIEW_TYPE, (leaf: WorkspaceLeaf) => new AccountingView(leaf, this));
     this.registerView(PAYROLL_VIEW_TYPE, (leaf: WorkspaceLeaf) => new PayrollView(leaf, this));
     this.registerView(INVENTORY_VIEW_TYPE, (leaf: WorkspaceLeaf) => new InventoryView(leaf, this));
+    this.registerView(EQUIPMENT_VIEW_TYPE, (leaf: WorkspaceLeaf) => new EquipmentView(leaf, this));
     this.registerView(TASKS_VIEW_TYPE, (leaf: WorkspaceLeaf) => new TasksView(leaf, this));
 
     this.addRibbonIcon("layout-grid", "OctaSuite", () => void this.openView(LAUNCHER_VIEW_TYPE));
@@ -180,6 +230,7 @@ export default class OctaSuitePlugin extends Plugin implements PluginHost {
     this.addCommand({ id: "open-accounting", name: "Abrir contabilidad", callback: () => void this.openView(ACCOUNTING_VIEW_TYPE) });
     this.addCommand({ id: "open-payroll", name: "Abrir nómina", callback: () => void this.openView(PAYROLL_VIEW_TYPE) });
     this.addCommand({ id: "open-inventory", name: "Abrir inventario", callback: () => void this.openView(INVENTORY_VIEW_TYPE) });
+    this.addCommand({ id: "open-equipment", name: "Abrir equipos", callback: () => void this.openView(EQUIPMENT_VIEW_TYPE) });
     this.addCommand({ id: "open-tasks", name: "Abrir tareas", callback: () => void this.openView(TASKS_VIEW_TYPE) });
     this.addCommand({ id: "reload-journal", name: "Recargar datos del vault", callback: () => void this.reload(true) });
 
@@ -207,6 +258,11 @@ export default class OctaSuitePlugin extends Plugin implements PluginHost {
   async loadSettings(): Promise<void> {
     const stored = (await this.loadData()) as Partial<OctaSuiteSettings> | null;
     this.settings = { ...DEFAULT_SETTINGS, ...(stored ?? {}) };
+    // Migración v1 → v2: la selección se deriva del selector simple. La
+    // normalización contra el disco (empresas borradas) la hace reload().
+    this.settings.activeCompanyIds = migrateActiveCompanyIds(stored ?? {});
+    this.settings.activeCompanyId = this.settings.activeCompanyIds[0] ?? DEFAULT_COMPANY_ID;
+    this.previousActiveCompanyIds = [...this.settings.activeCompanyIds];
   }
 
   /** Cola secuencial para serializar escrituras de configuración y cambios de journal. */
@@ -216,13 +272,19 @@ export default class OctaSuitePlugin extends Plugin implements PluginHost {
     this.settingsSaveQueue = this.settingsSaveQueue.then(async () => {
       await this.saveData(this.settings);
       const next = new VaultJournal(this.app.vault, this.settings.dataFolder, this.settings.activeCompanyId);
-      // Cambiar la carpeta o la empresa activa cambia QUÉ partición del journal se lee:
-      // hay que reconstruir el estado. El resto de campos de settings (perfil, IVA, etc.)
-      // no cambian el origen, así que solo se refrescan las vistas (sin re-leer del disco).
+      // Cambiar la carpeta, la empresa primaria o la selección multi-empresa
+      // cambia QUÉ particiones del journal se leen: hay que reconstruir el
+      // estado. El resto de campos de settings (perfil, IVA, etc.) no cambian
+      // el origen, así que solo se refrescan las vistas (sin re-leer del disco).
       const journalChanged =
         next.folderName !== this.journal.folderName || next.companyIdentifier !== this.journal.companyIdentifier;
+      const selectionChanged = !sameActiveCompanyIds(
+        this.settings.activeCompanyIds,
+        this.previousActiveCompanyIds,
+      );
+      this.previousActiveCompanyIds = [...this.settings.activeCompanyIds];
       this.journal = next;
-      if (journalChanged) {
+      if (journalChanged || selectionChanged) {
         await this.reload(false);
         return;
       }
@@ -242,13 +304,19 @@ export default class OctaSuitePlugin extends Plugin implements PluginHost {
   }
 
   /**
-   * Cambia la empresa activa. Vacío o ausente cae al ID por defecto.
-   * `saveSettings()` detecta el cambio de partición y reconstruye el estado.
+   * Fija la selección multi-empresa: normaliza contra las empresas disponibles
+   * (dedupe, descarta borradas, nunca vacía), actualiza la primaria si la
+   * primera cambió y reconstruye los estados. `saveSettings()` detecta el
+   * cambio de partición o de selección y recarga.
    */
-  async setActiveCompany(companyId: string): Promise<void> {
-    const id = companyId.trim() || DEFAULT_COMPANY_ID;
-    if (id === this.settings.activeCompanyId) return;
-    this.settings.activeCompanyId = id;
+  async setActiveCompanyIds(companyIds: string[]): Promise<void> {
+    const onDisk = await this.journalCompanies();
+    const primary = this.primaryCompanyId;
+    if (!onDisk.includes(primary)) onDisk.unshift(primary);
+    const next = normalizeActiveCompanyIds(companyIds, onDisk, primary);
+    if (sameActiveCompanyIds(next, this.settings.activeCompanyIds)) return;
+    this.settings.activeCompanyIds = next;
+    this.settings.activeCompanyId = next[0] ?? primary;
     await this.saveSettings();
   }
 
@@ -280,7 +348,9 @@ export default class OctaSuitePlugin extends Plugin implements PluginHost {
 
     const event = this.newEvent("company.created", { companyId: id, name, baseCurrency });
     await this.journal.append(event, id);
+    // La empresa nueva queda como PRIMARIA y la selección conserva las anteriores.
     this.settings.activeCompanyId = id;
+    this.settings.activeCompanyIds = [id, ...this.settings.activeCompanyIds.filter((c) => c !== id)];
     this.settings.currency = baseCurrency;
     await this.saveSettings(); // detecta el cambio de empresa y recarga con la partición nueva.
     return id;
@@ -310,9 +380,38 @@ export default class OctaSuitePlugin extends Plugin implements PluginHost {
       } catch (error) {
         console.warn("[OctaSuite] no se pudieron cargar los catálogos del vault", error);
       }
-      const { events, corrupt } = await this.journal.loadAll();
-      const { state, rejected } = project(events);
-      this.state = state;
+
+      // Selección efectiva contra el disco: las seleccionadas que ya no existen
+      // se descartan y la primaria siempre se mantiene válida aunque su partición
+      // todavía no tenga archivos.
+      const primary = this.primaryCompanyId;
+      const onDisk = await this.journalCompanies();
+      if (!onDisk.includes(primary)) onDisk.unshift(primary);
+      const selected = normalizeActiveCompanyIds(this.settings.activeCompanyIds, onDisk, primary);
+      this.settings.activeCompanyIds = selected;
+      this.settings.activeCompanyId = selected[0] ?? primary;
+
+      // Una proyección POR empresa seleccionada (loadAllCompanies carga todas
+      // las particiones del journal, cada una en su propio ParseResult).
+      const all = await this.journal.loadAllCompanies();
+      const nextStates = new Map<string, State>();
+      let rejected: RejectedEvent[] = [];
+      let corrupt: ParseResult["corrupt"] = [];
+      for (const companyId of selected) {
+        const parsed = all.get(companyId);
+        if (!parsed) {
+          // Partición vacía (empresa recién creada sin eventos): estado mínimo.
+          nextStates.set(companyId, emptyState());
+          continue;
+        }
+        const { state, rejected: companyRejected } = project(parsed.events);
+        nextStates.set(companyId, state);
+        rejected = rejected.concat(companyRejected);
+        corrupt = corrupt.concat(parsed.corrupt);
+      }
+
+      this.statesByCompany = nextStates;
+      this.state = nextStates.get(this.settings.activeCompanyId) ?? emptyState();
       this.rejectedCount = rejected.length;
       this.corruptCount = corrupt.length;
       this.lastRejections = rejected;
@@ -321,7 +420,8 @@ export default class OctaSuitePlugin extends Plugin implements PluginHost {
       await this.seedCategoriesIfEmpty();
       this.refreshViews();
 
-      if (notify) new Notice(`OctaSuite: ${events.length} evento(s) cargados`);
+      const totalEvents = selected.reduce((acc, id) => acc + (all.get(id)?.events.length ?? 0), 0);
+      if (notify) new Notice(`OctaSuite: ${totalEvents} evento(s) cargados en ${selected.length} empresa(s)`);
       if (rejected.length > 0) console.warn("[OctaSuite] eventos rechazados al reconstruir el estado", rejected);
       if (corrupt.length > 0) console.warn("[OctaSuite] líneas ilegibles en el journal", corrupt);
     } catch (error) {
@@ -350,14 +450,14 @@ export default class OctaSuitePlugin extends Plugin implements PluginHost {
   }
 
   /** Agrega el hecho al journal y lo aplica al estado en memoria. */
-  async commit(event: AnyEvent, options: { silent?: boolean } = {}): Promise<boolean> {
+  async commit(event: AnyEvent, options: { silent?: boolean; companyId?: string } = {}): Promise<boolean> {
     const rejection = apply(this.state, event);
     if (rejection) {
       new Notice(`OctaSuite: ${rejection.reason}`);
       return false;
     }
     try {
-      await this.journal.append(event);
+      await this.journal.append(event, options.companyId);
     } catch (error) {
       console.error("[OctaSuite] no se pudo escribir el journal", error);
       new Notice("OctaSuite: el cambio NO se guardó en disco. Revisa la consola.");
@@ -400,7 +500,10 @@ export default class OctaSuitePlugin extends Plugin implements PluginHost {
   private octasuiteLeaves(): WorkspaceLeaf[] {
     const leaves: WorkspaceLeaf[] = [];
     this.app.workspace.iterateAllLeaves((leaf) => {
-      if (KNOWN_VIEW_TYPES.includes(leaf.getViewState().type)) leaves.push(leaf);
+      // Por prefijo y no por lista exacta: cualquier vista octasuite-* (incluidas
+      // de versiones anteriores o con divergencia de constante) se reutiliza en
+      // lugar de abrir una pestaña nueva al navegar.
+      if (isOctaSuiteViewType(leaf.getViewState().type)) leaves.push(leaf);
     });
     return leaves;
   }
@@ -413,12 +516,34 @@ export default class OctaSuitePlugin extends Plugin implements PluginHost {
    * Navega dentro de la MISMA hoja: cambiar de módulo reemplaza el contenido en
    * vez de abrir otra pestaña. Antes, recorrer seis mosaicos dejaba seis
    * pestañas de OctaSuite abiertas.
+   *
+   * La hoja ACTIVA tiene prioridad: si ya estás dentro de OctaSuite, "volver al
+   * inicio" (y cualquier otro navigación) convierte ESA hoja en la vista pedida.
+   * Sin esto, con varias hojas abiertas (ej. panel lateral + main tras usar
+   * "abrir en ventana completa"), la flecha revelaba/creaba otra pestaña en vez
+   * de regresar.
    */
   async openView(viewType: string): Promise<void> {
     const { workspace } = this.app;
-    const wantsSidebar = this.settings.openLocation === "sidebar";
     const ours = this.octasuiteLeaves();
 
+    // 1) La hoja activa ya es de OctaSuite: navegar en ella, nunca abrir otra.
+    const activeLeaf = workspace.getMostRecentLeaf();
+    if (activeLeaf && ours.includes(activeLeaf)) {
+      await activeLeaf.setViewState({ type: viewType, active: true });
+      await workspace.revealLeaf(activeLeaf);
+      return;
+    }
+
+    // 2) La vista pedida ya está abierta en alguna hoja: revelarla sin duplicar.
+    const existing = ours.find((leaf) => leaf.getViewState().type === viewType);
+    if (existing) {
+      await workspace.revealLeaf(existing);
+      return;
+    }
+
+    // 3) Reutilizar una hoja de OctaSuite existente en la zona preferida.
+    const wantsSidebar = this.settings.openLocation === "sidebar";
     const target = ours.find((leaf) => this.isInMain(leaf) !== wantsSidebar) ?? ours[0];
     if (target) {
       await target.setViewState({ type: viewType, active: true });
@@ -426,6 +551,7 @@ export default class OctaSuitePlugin extends Plugin implements PluginHost {
       return;
     }
 
+    // 4) Primera vez: crear la hoja según la ubicación configurada.
     const leaf = wantsSidebar ? workspace.getRightLeaf(false) : workspace.getLeaf("tab");
     if (!leaf) return;
     await leaf.setViewState({ type: viewType, active: true });
@@ -568,34 +694,18 @@ class OctaSuiteSettingTab extends PluginSettingTab {
   }
 
   /**
-   * Selector de la empresa activa (solo selección). Se alimenta del filesystem
-   * (journal.listCompanyIds()), que es el origen único de verdad de las empresas
-   * existentes; el mapa muerto state.companies no se toca. Al cambiar se actualiza
-   * activeCompanyId y saveSettings() reconstruye el estado con la partición nueva.
+   * Selector de empresas activas (multi-selección). La primera seleccionada
+   * es la primaria: partición que se lee y escribe. Se monta el mismo
+   * componente `company-switcher` que usan el launcher y la barra de módulos,
+   * para que el comportamiento sea idéntico en todos los puntos de entrada.
    */
-  private async renderCompanySwitcher(containerEl: HTMLElement): Promise<void> {
-    const companies = await this.plugin.journalCompanies();
-    // La empresa activa siempre es una opción válida, aunque todavía no tenga datos
-    // (listCompanyIds solo lista las que ya tienen archivos).
-    if (!companies.includes(this.plugin.settings.activeCompanyId)) {
-      companies.unshift(this.plugin.settings.activeCompanyId);
-    }
-    companies.sort((a, b) => a.localeCompare(b));
-
-    new Setting(containerEl)
-      .setName("Empresa activa")
-      .setDesc("La partición del journal que se lee y escribe. Cambiar reconstruye el estado.")
-      .addDropdown((dropdown) => {
-        for (const companyId of companies) {
-          dropdown.addOption(companyId, companyId === DEFAULT_COMPANY_ID ? `${companyId} (principal)` : companyId);
-        }
-        dropdown.setValue(this.plugin.settings.activeCompanyId);
-        dropdown.onChange(async (value) => {
-          if (value === this.plugin.settings.activeCompanyId) return;
-          this.plugin.settings.activeCompanyId = value || DEFAULT_COMPANY_ID;
-          await this.plugin.saveSettings(); // detecta el cambio de empresa y recarga el estado
-        });
-      });
+  private renderCompanySwitcher(containerEl: HTMLElement): void {
+    const row = new Setting(containerEl)
+      .setName("Empresas activas")
+      .setDesc(
+        "Selecciona las empresas que se ven consolidadas en Inicio y Reportes. La PRIMERA es la primaria: ahí se escriben los documentos. Usa el selector de cada módulo para reordenar eligiendo otra empresa.",
+      );
+    mountCompanySwitcher(row.settingEl, this.plugin);
   }
 
   override display(): void {
@@ -612,7 +722,7 @@ class OctaSuiteSettingTab extends PluginSettingTab {
         }),
       );
 
-    void this.renderCompanySwitcher(containerEl);
+    this.renderCompanySwitcher(containerEl);
 
     // ── Crear empresa ───────────────────────────────────────────────
     {

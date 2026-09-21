@@ -132,6 +132,7 @@ export class CustomerPicker {
     const prefill = trimmed === "" ? undefined : LOOKS_LIKE_NIT.test(trimmed) ? { taxId: trimmed } : { name: trimmed };
 
     new PartnerModal(this.app, {
+      host: this.host,
       ...(prefill ? { prefill } : {}),
       candidates: activePartners(this.host.state),
       onSubmit: async (draft) => {

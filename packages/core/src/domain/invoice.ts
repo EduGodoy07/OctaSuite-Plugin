@@ -152,6 +152,98 @@ export interface CreditNote {
   readonly createdAt: IsoInstant;
 }
 
+/**
+ * Nota de crédito como se persiste en el estado (incluye los campos del
+ * borrador extendido B-05). `type` queda opcional: las notas creadas por
+ * `invoice.credited` no lo llevan; las de `invoice.refunded` sí.
+ */
+export interface StoredCreditNote extends CreditNote {
+  readonly type?: CreditNoteType;
+  readonly lines?: readonly {
+    readonly productId: string;
+    readonly quantity: number;
+    readonly unitPrice: Money;
+    readonly taxRate: number;
+  }[];
+  readonly tenderRefund?: TenderRefund;
+  readonly stockReturnLocationId?: string;
+  readonly exchangeLines?: readonly ExchangeLine[];
+}
+
+/** Tipo de nota de crédito: anulación a crédito del cliente, reembolso al tender original, o cambio. */
+export type CreditNoteType = "store_credit" | "refund" | "exchange";
+
+/** Reembolso al método de pago original (tender). */
+export interface TenderRefund {
+  readonly method: string;
+  readonly amount: Money;
+}
+
+/** Línea de cambio (producto nuevo que se entrega en el exchange). */
+export interface ExchangeLine {
+  readonly productId: string;
+  readonly quantity: number;
+  readonly unitPrice: Money;
+  readonly taxRate: number;
+}
+
+/** Borrador para crear una nota de crédito extendida (B-05). */
+export interface CreditNoteDraft {
+  readonly type?: CreditNoteType;
+  readonly amount: Money;
+  readonly reason: string;
+  readonly lines?: readonly {
+    readonly productId: string;
+    readonly quantity: number;
+    readonly unitPrice: Money;
+    readonly taxRate: number;
+  }[];
+  readonly tenderRefund?: TenderRefund;
+  readonly stockReturnLocationId?: string;
+  readonly exchangeLines?: readonly ExchangeLine[];
+}
+
+/** Valida un borrador de nota de crédito extendida. */
+export function validateCreditNoteDraft(draft: CreditNoteDraft): DomainError[] {
+  const errors: DomainError[] = [];
+
+  if (!draft.reason || draft.reason.trim() === "") {
+    errors.push(new DomainError("El motivo es obligatorio", "credit_note.reason_required"));
+  }
+
+  if (isNegative(draft.amount)) {
+    errors.push(new DomainError("El monto no puede ser negativo", "credit_note.negative"));
+  }
+  if (draft.amount.minor === 0) {
+    errors.push(new DomainError("El monto no puede ser cero", "credit_note.zero_amount"));
+  }
+
+  const type = draft.type ?? "store_credit";
+
+  if (type === "refund") {
+    if (!draft.tenderRefund) {
+      errors.push(new DomainError("El reembolso a tender requiere tenderRefund", "credit_note.refund_requires_tender"));
+    } else {
+      if (draft.tenderRefund.amount.minor !== draft.amount.minor) {
+        errors.push(new DomainError("El monto del tenderRefund debe coincidir con el amount total", "credit_note.tender_amount_mismatch"));
+      }
+      if (!draft.tenderRefund.method || draft.tenderRefund.method.trim() === "") {
+        errors.push(new DomainError("El método de tender es obligatorio", "credit_note.tender_method_required"));
+      }
+    }
+  }
+
+  if (type === "exchange") {
+    const hasReturnLines = draft.lines && draft.lines.length > 0;
+    const hasExchangeLines = draft.exchangeLines && draft.exchangeLines.length > 0;
+    if (!hasReturnLines && !hasExchangeLines) {
+      errors.push(new DomainError("Un exchange requiere líneas devueltas y/o líneas de cambio", "credit_note.exchange_requires_lines"));
+    }
+  }
+
+  return errors;
+}
+
 /** Correlativo sin huecos por serie: el siguiente es siempre el ultimo mas uno. */
 export function nextNumber(lastNumber: number | undefined): number {
   if (lastNumber === undefined) return 1;
@@ -204,7 +296,7 @@ export function validateIssueInput(input: Partial<IssueInvoiceInput>): DomainErr
 }
 
 /** Una nota de credito nunca puede acreditar mas de lo que queda vivo en la factura. */
-export function assertCreditable(invoice: Invoice, amount: Money): void {
+export function assertRefundable(invoice: Invoice, amount: Money): void {
   if (isNegative(amount)) fail("credit_note.negative", "El monto de la nota de credito no puede ser negativo");
   const afterCredit = add(invoice.creditedTotal, amount);
   if (compare(afterCredit, invoice.totals.total) > 0) {
@@ -214,6 +306,9 @@ export function assertCreditable(invoice: Invoice, amount: Money): void {
     );
   }
 }
+
+/** Alias para compatibilidad. */
+export const assertCreditable = assertRefundable;
 
 export function outstandingBalance(invoice: Invoice): Money {
   const credited = invoice.creditedTotal;

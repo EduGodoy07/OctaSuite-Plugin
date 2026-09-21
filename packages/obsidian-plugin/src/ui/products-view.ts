@@ -14,6 +14,7 @@ import { AdjustmentModal } from "./adjustment-modal.js";
 import { ConfirmModal } from "./confirm-modal.js";
 import type { PluginHost } from "./host.js";
 import { moduleHeader } from "./nav.js";
+import { PricelistManagerModal } from "./pricelist-manager-modal.js";
 import { ProductModal } from "./product-modal.js";
 
 export class ProductsView extends ItemView {
@@ -70,6 +71,8 @@ export class ProductsView extends ItemView {
       this.renderList();
     };
     tools.createEl("button", { text: "+ Producto", cls: "mod-cta" }).onclick = () => this.openEditor();
+    tools.createEl("button", { text: "Precios" }).onclick = () =>
+      new PricelistManagerModal(this.app, this.host).open();
 
     contentEl.createDiv({ cls: "octa-list-slot" });
     this.renderList();

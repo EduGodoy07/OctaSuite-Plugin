@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  allCreditNotes,
   computeInvoiceTotals,
+  creditNotesInPeriod,
   creditNotesFor,
   discountSummary,
   expensesByCategory,
@@ -36,6 +38,15 @@ const issuedPayload = (invoiceId: string, number: number) => ({
   totals: totalsSnapshot(computeInvoiceTotals(lines, "GTQ")),
   partnerName: "Cliente Uno",
   partnerTaxId: "CF",
+});
+
+const refundPayload = (creditNoteId: string, invoiceId: string, day: number) => ({
+  creditNoteId,
+  invoiceId,
+  date: at(day),
+  amount: fromDecimal("50.00", "GTQ"),
+  reason: "Devolucion",
+  type: "store_credit" as const,
 });
 
 describe("Proyeccion de gastos", () => {
@@ -265,6 +276,41 @@ describe("receiptData()", () => {
     const data = receiptData(invoice, company, "");
     expect(data.footer).toBe("");
   });
+
+  it("incluye el descuento por línea en subtotal, descuento, impuestos y total", () => {
+    const lines: InvoiceLine[] = [
+      { description: "Radio", quantity: 2, unitPrice: fromDecimal("100.00", "GTQ"), taxRate: 12, discount: { percent: 10 } },
+    ];
+    const { state } = project([
+      evt("invoice.issued", 10, {
+        invoiceId: "inv_rc3",
+        series: "C",
+        number: 1,
+        date: "2026-08-10",
+        currency: "GTQ",
+        lines,
+        totals: totalsSnapshot(computeInvoiceTotals(lines, "GTQ")),
+        partnerName: "Cliente Descuento",
+        partnerTaxId: "CF",
+      }),
+      evt("invoice.paid", 11, {
+        invoiceId: "inv_rc3",
+        paymentMethod: "Efectivo",
+      }),
+    ]);
+
+    const invoice = state.invoices.get("inv_rc3")!;
+    const data = receiptData(invoice, company, "");
+
+    expect(data.lines).toHaveLength(1);
+    expect(data.lines[0]!.description).toBe("Radio");
+    expect(data.lines[0]!.quantity).toBe(2);
+    // 2 × 100.00 = 200.00 brutos; 10% descuento = 20.00
+    expect(data.lines[0]!.subtotal.minor).toBe(18000); // neto: 200.00 − 20.00
+    expect(data.lines[0]!.discount.minor).toBe(2000);  // 10% de 200.00
+    expect(data.lines[0]!.tax.minor).toBe(2160);       // 12% de 180.00
+    expect(data.total.minor).toBe(20160);              // 180.00 + 21.60
+  });
 });
 
 describe("Descuentos del periodo", () => {
@@ -407,5 +453,213 @@ describe("Descuentos del periodo", () => {
     const summary = discountSummary(state, "2026-08", "GTQ");
     expect(summary.total.minor).toBe(1000); // 10% bruto, no 0 por la NC
     expect(summary.documents).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Orden temporal tolerable a dependencias (regresion del journal real)
+//
+// Caso real (HighSoftTech, 2026-09): `invoice.refunded` con `at` ANTERIOR al
+// `invoice.issued` de su propia factura (sync/relojes entre dispositivos puede
+// invertir el orden de escritura). La proyeccion ordenada por `at` procesaba el
+// refund primero -> rechazo "Factura inexistente" permanente aunque la factura
+// SÍ llega mas tarde en el journal.
+// ---------------------------------------------------------------------------
+describe("Reconstruccion tolerante a dependencias", () => {
+  it("aplica un refund cuyo at es anterior al issued de su factura", () => {
+    const { state, rejected } = project([
+      evt("invoice.refunded", 2, refundPayload("ncr_1", "inv_1", 2)),
+      evt("invoice.issued", 4, issuedPayload("inv_1", 1)),
+    ]);
+    expect(rejected).toEqual([]);
+    expect(state.invoices.get("inv_1")).toBeDefined();
+    expect(state.creditNotes.has("ncr_1")).toBe(true);
+  });
+
+  it("resuelve dependencias en cadena (refund + paid antes que su issued)", () => {
+    const { state, rejected } = project([
+      evt("invoice.refunded", 2, refundPayload("ncr_1", "inv_1", 2)),
+      evt("invoice.paid", 3, { invoiceId: "inv_1", paidAt: at(3), paymentMethod: "efectivo" }),
+      evt("invoice.issued", 4, issuedPayload("inv_1", 1)),
+    ]);
+    expect(rejected).toEqual([]);
+    const invoice = state.invoices.get("inv_1")!;
+    expect(invoice.status).toBe("paid");
+    expect(invoice.creditNoteIds).toContain("ncr_1");
+  });
+
+  it("no oculta un refund de factura que nunca se emite (sigue en rejected)", () => {
+    const { state, rejected } = project([
+      evt("invoice.refunded", 2, refundPayload("ncr_1", "inv_ghost", 2)),
+    ]);
+    expect(rejected.map((r) => r.code)).toEqual(["not_found"]);
+    expect(state.creditNotes.size).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Listado de notas de crédito (vista CREDIT_NOTES_VIEW_TYPE)
+// ---------------------------------------------------------------------------
+describe("allCreditNotes", () => {
+  it("lista todas las notas de la empresa activa ordenadas por fecha desc", () => {
+    const { state, rejected } = project([
+      evt("invoice.issued", 1, issuedPayload("inv_1", 1)),
+      evt("invoice.refunded", 2, refundPayload("ncr_1", "inv_1", 2)),
+      evt("invoice.refunded", 3, refundPayload("ncr_2", "inv_1", 3)),
+    ]);
+    expect(rejected).toEqual([]);
+    const notes = allCreditNotes(state);
+    expect(notes.map((n) => n.id)).toEqual(["ncr_2", "ncr_1"]);
+    expect(notes.every((n) => n.type === "store_credit")).toBe(true);
+  });
+
+  it("incluye notas base (credited) sin type junto a las extendidas", () => {
+    const { state } = project([
+      evt("invoice.issued", 1, issuedPayload("inv_1", 1)),
+      evt("invoice.credited", 2, {
+        creditNoteId: "ncr_base",
+        invoiceId: "inv_1",
+        date: "2026-08-10",
+        amount: fromDecimal("30.00", "GTQ"),
+        reason: "Descuento",
+      }),
+      evt("invoice.refunded", 3, refundPayload("ncr_ext", "inv_1", 3)),
+    ]);
+    const notes = allCreditNotes(state);
+    expect(notes).toHaveLength(2);
+    const base = notes.find((n) => n.id === "ncr_base")!;
+    const ext = notes.find((n) => n.id === "ncr_ext")!;
+    expect(base.type).toBeUndefined();
+    expect(ext.type).toBe("store_credit");
+  });
+
+  it("expone los campos extendidos (tenderRefund/exchangeLines) si existen", () => {
+    const { state } = project([
+      evt("invoice.issued", 1, issuedPayload("inv_1", 1)),
+      evt("invoice.refunded", 3, {
+        ...refundPayload("ncr_x", "inv_1", 3),
+        type: "refund",
+        tenderRefund: { method: "efectivo", amount: fromDecimal("50.00", "GTQ") },
+      }),
+    ]);
+    const note = allCreditNotes(state)[0]!;
+    expect(note.type).toBe("refund");
+    expect(note.tenderRefund?.method).toBe("efectivo");
+  });
+});
+
+describe("creditNotesInPeriod", () => {
+  it("filtra las notas por mes, sin traer las de otros meses", () => {
+    const { state } = project([
+      evt("invoice.issued", 1, issuedPayload("inv_1", 1)),
+      // Nota en agosto (mes del fixture)
+      evt("invoice.refunded", 3, { ...refundPayload("ncr_ago", "inv_1", 3), date: "2026-08-03" }),
+      // Nota en septiembre
+      evt("invoice.refunded", 32, { ...refundPayload("ncr_sep", "inv_1", 32), date: "2026-09-01" }),
+      // Nota en julio
+      evt("invoice.refunded", 33, { ...refundPayload("ncr_jul", "inv_1", 33), date: "2026-07-01" }),
+    ]);
+    const notes = creditNotesInPeriod(state, "2026-08");
+    expect(notes.map((n) => n.id)).toEqual(["ncr_ago"]);
+  });
+
+  it("solo toma notas existentes (rechazadas o pendientes no aparecen)", () => {
+    const { state } = project([
+      evt("invoice.refunded", 2, refundPayload("ncr_ghost", "inv_ghost", 2)),
+    ]);
+    expect(creditNotesInPeriod(state, "2026-08")).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// IDs deterministas en nota de credito extendida (reproducibilidad del journal)
+//
+// La proyeccion en memoria es una funcion pura del journal: los ids de
+// entidades derivadas (ajustes, asientos, cuentas de credito y transacciones)
+// deben ser estables y legibles, no aleatorios por corrida. Esto permite
+// re-proyectar el mismo journal y obtener exactamente el mismo estado.
+// ---------------------------------------------------------------------------
+describe("Invoice refunded deterministic IDs", () => {
+  const issuedWithPartner = (invoiceId: string, number: number) => ({
+    ...issuedPayload(invoiceId, number),
+    partnerId: "par_1",
+  });
+
+  it("deriva ids estables y legibles para ajustes, asiento, cuenta y transaccion", () => {
+    const journal: AnyEvent[] = [
+      evt("accounting.account_created", 9, { accountId: "acc_caja", code: "1100", name: "Caja", type: "activo" }),
+      evt("accounting.account_created", 9, { accountId: "acc_ar", code: "1200", name: "Clientes", type: "activo" }),
+      evt("invoice.issued", 10, issuedWithPartner("inv_det", 1)),
+      evt("invoice.refunded", 12, {
+        ...refundPayload("ncr_det", "inv_det", 12),
+        lines: [
+          { productId: "prod_1", quantity: 1, unitPrice: fromDecimal("25.00", "GTQ"), taxRate: 12 },
+          { productId: "prod_2", quantity: 1, unitPrice: fromDecimal("25.00", "GTQ"), taxRate: 12 },
+        ],
+        tenderRefund: { method: "efectivo", amount: fromDecimal("50.00", "GTQ") },
+      }),
+    ];
+
+    const first = project(journal);
+    const second = project(journal);
+
+    expect(first.rejected).toEqual([]);
+    expect(second.rejected).toEqual([]);
+
+    // Ajustes de stock: un id por linea devuelta, derivado del credit note id
+    const adjKeys = [...first.state.adjustments.keys()];
+    expect(adjKeys).toEqual(["adj_ncr_det_0", "adj_ncr_det_1"]);
+    expect([...first.state.adjustments.values()].map((a) => a.id)).toEqual(adjKeys);
+
+    // Asiento de reembolso: un solo id derivado del credit note id
+    expect([...first.state.journalEntries.keys()]).toEqual(["je_ncr_det"]);
+    expect([...first.state.journalEntries.values()].map((e) => e.id)).toEqual(["je_ncr_det"]);
+
+    // Cuenta de credito (creada por partner) y transaccion
+    expect([...first.state.creditAccounts.keys()]).toEqual(["cra_par_1"]);
+    expect([...first.state.creditTransactions.keys()]).toEqual(["crt_ncr_det"]);
+    expect([...first.state.creditTransactions.values()].map((t) => t.id)).toEqual(["crt_ncr_det"]);
+
+    // Replay estable: re-proyectar el mismo journal produce exactamente los mismos ids
+    expect([...second.state.adjustments.keys()]).toEqual(adjKeys);
+    expect([...second.state.journalEntries.keys()]).toEqual([...first.state.journalEntries.keys()]);
+    expect([...second.state.creditAccounts.keys()]).toEqual([...first.state.creditAccounts.keys()]);
+    expect([...second.state.creditTransactions.keys()]).toEqual([...first.state.creditTransactions.keys()]);
+  });
+
+  it("mantiene transacciones deterministas con varios reembolsos distintos", () => {
+    const journal: AnyEvent[] = [
+      evt("invoice.issued", 10, issuedWithPartner("inv_a", 1)),
+      evt("invoice.refunded", 11, refundPayload("ncr_a", "inv_a", 11)),
+      evt("invoice.refunded", 12, refundPayload("ncr_b", "inv_a", 12)),
+    ];
+    const { state, rejected } = project(journal);
+    expect(rejected).toEqual([]);
+    expect([...state.creditTransactions.keys()]).toEqual(["crt_ncr_a", "crt_ncr_b"]);
+  });
+});
+
+describe("Integridad de emision (item 4)", () => {
+  it("rechaza invoice.issued cuyos totals no cuadran con las lineas", () => {
+    const { state, rejected } = project([
+      evt("invoice.issued", 1, {
+        ...issuedPayload("inv_drift", 1),
+        totals: {
+          untaxed: fromDecimal("900.00", "GTQ"),
+          tax: fromDecimal("0.00", "GTQ"),
+          total: fromDecimal("900.00", "GTQ"),
+        },
+      }),
+    ]);
+    expect(rejected.map((r) => r.code)).toEqual(["invoice.totals_drift"]);
+    expect(state.invoices.has("inv_drift")).toBe(false);
+  });
+
+  it("rechaza eventos con tipo desconocido en lugar de aceptarlos en silencio", () => {
+    const { state, rejected } = project([
+      { id: "e_unknown", at: "2026-08-01T12:00:00.000Z", v: 1, type: "totally.unknown", payload: {} } as unknown as AnyEvent,
+    ]);
+    expect(rejected.map((r) => r.code)).toEqual(["unknown_event"]);
+    expect(state.invoices.size).toBe(0);
   });
 });
