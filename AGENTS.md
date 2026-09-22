@@ -70,10 +70,10 @@
    - Repositorio remoto: `https://github.com/EduGodoy07/OctaSuite-Plugin`.
    - **Este directorio ES el repo git** (rama `staging`, trackeando `origin/staging`).
      El `.git/` se creó el 2026-09-21 alineado con el contenido ya sincronizado; NO borrar `.git`.
-   - **Topología de ramas:**
-     - `staging` = rama de desarrollo activa (monorepo `packages/*`). Flujo de trabajo: pull → cambio → commit → push.
-     - `main` = rama histórica con estructura plana vieja (`core/`, `src/`, `tests/`, esbuild), pre-plan B. Actualizada como contenido-subsconjunto (equivalencia verificada 2026-09-21) pero su estructura sigue la línea vieja — sin migración acordada todavía.
-   - **Flujo de trabajo:** `git pull` al empezar, `git status` para ver la deriva real, `git add/commit/push` directo desde este directorio.
+- **Topología de ramas:**
+      - `staging` = rama de desarrollo activa (monorepo `packages/*`). Flujo de trabajo: pull → cambio → commit → push.
+      - `main` = rama por defecto; migrada el 2026-09-21: adoptó el árbol del monorepo (staging) preservando el historial completo (merge, sin force-push). Su contenido ES el de `staging` (equivalencia verificada).
+    - **Flujo de trabajo:** `git pull` al empezar, `git status` para ver la deriva real, `git add/commit/push` directo desde este directorio.
    - **Regla:** Solo hacer commit y push con confirmación explícita de Eduardo.
 
 ---
