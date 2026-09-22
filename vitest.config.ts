@@ -6,14 +6,14 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
   test: {
-    include: ["tests/**/*.test.ts", "core/tests/**/*.test.ts"],
+    include: ["packages/*/tests/**/*.test.ts"],
     environment: "node",
   },
   resolve: {
     alias: {
       // El paquete npm "obsidian" es solo tipos (sin entry runtime): en
       // tests node se resuelve contra un stub local.
-      obsidian: path.resolve(__dirname, "tests/obsidian-stub.ts"),
+      obsidian: path.resolve(__dirname, "packages/obsidian-plugin/tests/obsidian-stub.ts"),
     },
   },
 });

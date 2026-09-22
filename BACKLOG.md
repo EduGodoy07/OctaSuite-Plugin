@@ -107,28 +107,56 @@ IGSS, bono 14) — ninguna plataforma de las comunidades comparadas la tiene.
   empleado. Un organigrama visual hace útil esa data (estructura de la empresa,
   cadena de mando) y los adjuntos (CV PDF + foto) convierten el módulo de nómina
   en el expediente del empleado.
-- **Estado:** IN PROGRESS (2026-09-11) — aprobado por Eduardo como punto del
-  plan; alcance inicial sin implementar.
-- **Alcance probable:**
-  1. **Vista "Organigrama"** (`ItemView` nuevo, tipo `octasuite-orgchart`):
-     árbol renderizado desde `state.employees` usando `managerId` (raíz =
-     empleado sin manager). Formato a decidir con Eduardo: canvas `.canvas`
-     nativo de Obsidian (generado en el vault) vs render HTML/SVG del plugin
-     (más control visual). Probar primero la opción SVG/HTML inline para no
-     depender de coordenadas manuales de canvas.
-  2. **Adjuntos por empleado:** foto + CV en PDF guardados en el vault
-     (`octasuite-data/employees/{employeeId}/foto.*` y `cv.pdf` vía
-     `vault.createBinary`), con `photoPath`/`cvPath` en el modelo `Employee`
-     persistidos como evento `employee.updated` (el journal sigue siendo la
-     fuente de verdad; los binarios viven fuera pero el path es inmutable en el
-     evento). Mostrar foto + acción "Ver CV" en el modal/expediente del empleado.
-  3. No tocar la validación de jerarquía existente (ya cubre ciclos/archivados).
-- **Archivos:** `packages/core/src/domain/payroll.ts` (campos nuevos),
-  `packages/core/src/store.ts` (evento `employee.updated`), `events.ts`,
-  `packages/obsidian-plugin/src/ui/orgchart-view.ts` (nueva),
-  `ui/payroll-view.ts` (expediente + subida de archivos), `modules.ts`.
-- **Dependencias:** ninguna externa. 100% offline (vault). Puede apoyarse en la
-  jerarquía existente de `payroll`.
+- **Estado:** DONE (2026-09-11). Desviación respecto al plan original: se
+  mantuvo el organigrama como **tab "Organigrama" dentro de PayrollView** en
+  vez de crear una ItemView nueva (`octasuite-orgchart`), porque la tab ya
+  existía mostrando una lista indentada — se reemplazó con un árbol SVG inline,
+  evitando UI duplicada y romper el flujo de usuario. `payroll-view.ts` sigue
+  siendo el único punto de entrada de nómina.
+- **Implementación realizada:**
+  1. **Modelo:** campos `photoPath?: string` y `cvPath?: string` añadidos a
+     `Employee` (dominio, payroll.ts), validados por `validateEmployeeDraft`
+     (rechaza `""` o whitespace → `payroll.bad_attachment_path`). `EmployeeDraft`
+     los hereda vía `Omit`. Reducer `payroll.employee_updated` en `store.ts` ya
+     soporta `changes.photoPath`/`changes.cvPath` (campo general).
+  2. **Organigrama SVG (reemplaza la lista indentada):** `renderOrgchart()`
+     en `payroll-view.ts` — layout de árbol (columna=profundidad, fila=centro
+     de hojas descendientes, constantes `NODE_W=232/NODE_H=52/ROW_H=68/
+     LEVEL_GAP=48/PAD=16`), nodos SVG con rect + círculo avatar (iniciales) +
+     nombre + puesto, conectores ortogonales padre→hijo, raíces marcadas con
+     clase `is-root`. Se eliminó `renderOrgNode` (lista indentada antigua) y
+     helper `str` sin usar.
+  3. **Adjuntos en el expediente:** en el modal `EmployeeModal`, sección
+     "Expediente" (solo al editar) con botones "Subir foto" / "Subir CV" —
+     `input type="file"` → `vault.createFolder` (idempotente: solo si la
+     carpeta no existe) + `vault.createBinary` (o `vault.adapter.writeBinary`
+     si el archivo ya existe) al path `octasuite-data/employees/{id}/foto.{ext}`
+     / `cv.pdf` (extensión normalizada a minúsculas); al subir se actualiza
+     `photoPath`/`cvPath` en el draft que se envía con el evento
+     `payroll.employee_updated`. Re-subir el mismo tipo **sobrescribe el
+     binario en el vault** (mismo path); no hay botón "Quitar" a propósito —
+     el journal es inmutable y `photoPath: undefined` no se serializa, así
+     que un path publicado no se puede limpiar con el modelo actual. Al
+     crear un empleado nuevo, los adjuntos se agregan al editar (la creación
+     aún no tiene `employeeId` para el path del vault).
+  4. **Fila del empleado:** columna "Expediente" — miniatura de foto (`<img>`
+     con `vault.getResourcePath`, `32px` circular, clase `.octa-employee-photo`)
+     + botón "Ver CV" que abre el archivo del vault con
+     `app.workspace.openLinkText`.
+  5. **Estilos CSS:** `.octa-orgchart-wrap`, `.octa-orgchart-svg`, nodos/edges
+     del árbol, `.octa-employee-photo`, `.octa-attachment-row`/`.octa-attachment-
+     label`/`.octa-attachment-name` para la sección de adjuntos.
+- **Archivos:** `packages/core/src/domain/payroll.ts` (campos),
+  `packages/core/tests/payroll.test.ts` (2 tests: persistencia + rechazo blank),
+  `packages/obsidian-plugin/src/ui/payroll-view.ts` (orgchart SVG + modal
+  adjuntos + columna expediente), `styles.css` (nuevas clases).
+- **Suite:** typecheck 0 errores, 522/522 tests pasando, build+deploy OK.
+- **Bonus (posible bug latente aparte, NO tocado):** `writeReportToVault`
+  (`report-export.ts`) llama `vault.createFolder(folder)` sin chequear si la
+  carpeta ya existe — en Obsidian real `createFolder` lanza si existe, y el
+  test `reports-vault.test.ts` lo enmascara simulando idempotencia. Debería
+  revisarse en otro cambio.
+- **Pendiente para push:** confirmación explícita de Eduardo (`scripts/sync-push.sh`).
 
 ### B-03 · Dual pricing / listas de precios por cliente
 - **Por qué:** Square pide precio in-store vs online; Odoo lo resuelve con
@@ -163,6 +191,76 @@ IGSS, bono 14) — ninguna plataforma de las comunidades comparadas la tiene.
   `ui/credit-note-modal.ts`.
 - **Dependencias:** ninguna; puede apoyarse en B-01 (crédito como destino de
   devolución).
+
+### B-08 · Rutas con geolocalización
+- **Por qué:** pedido de Eduardo (2026-09-18). Para field service / entregas /
+  visitas se necesita registrar rutas, paradas y coordenadas. Verificado: ni el
+  ERP OctaSuite (Laravel) ni el plugin tienen geolocalización (0 hits de
+  `geoloc|latitude|longitude` en `plugins/octa` + migrations del ERP, y solo
+  "ruta" como file path en el plugin).
+- **Estado:** no existe.
+- **Alcance probable:** entidad Ruta (nombre, fecha, paradas ordenadas);
+  paradas con `lat/lng` (captura manual o vía `navigator.geolocation` si el
+  runtime de Obsidian lo permite) y estado de visita (pendiente/completada);
+  vínculo con partners/empleados. En modo offline-first el journal sigue siendo
+  la fuente de verdad (event sourcing actual, sin servidor).
+- **Archivos:** (a definir — probablemente `packages/core/src/domain/route.ts`,
+  `packages/obsidian-plugin/src/ui/route-view.ts`).
+- **Dependencias:** ninguno. No requiere servidor (event sourcing actual).
+
+---
+
+## Remediación de auditoría GLM 5.3 (2026-09-13)
+
+Auditoría de invariantes/estado (GLM 5.3) sobre OctaSuite Lite — 6 ítems de
+remediación con TDD estricto RED→GREEN. Ítems 1-5 implementados; el 6 (deploy)
+queda pendiente de confirmación final.
+
+### Ítems implementados (evidencia real, no assert)
+
+- **Ítem 1 — Prórrateo fiscal bono14/aguinaldo y provisión mensual:**
+  `multiply(highestSalary, Math.min(1, workedDays/365))` en
+  `packages/core/src/domain/payroll.ts` (~l.113/l.123) y provisiones
+  `multiply(gross, 1/12)`. Evidencia: `packages/core/tests/payroll.test.ts`
+  (31/31 en verde). Decisión aprobada por Eduardo: prorrata con tope 1 y
+  provisión 1/12.
+- **Ítem 2 — Descuento por línea readonly en receipts + totales en UI:**
+  `readonly discount: Money` en `ReceiptLineData` (`domain/stock.ts`);
+  `receiptData()` usa `computeLineTotals`/`lineDiscountAmount`; tabla de
+  receipts en `ui/receipt-view.ts` con 7 columnas y totales por línea.
+  Evidencia: `packages/obsidian-plugin/tests/receipt-view.test.ts` (2/2).
+- **Ítem 3 — IDs deterministas en nota de crédito (invoice.refunded):**
+  causa raíz: `generateId()` (hash global no determinista) rompía el replay.
+  Fix sin `generateId()` — adjustments `adj_{creditNoteId}_{i}` (índice de
+  línea), journal entry `je_{creditNoteId}`, credit account
+  `cra_{partnerId}` (partnerId = `current.partnerId ?? ""`, cuenta existente
+  reutilizada), credit transaction `crt_{creditNoteId}`; claves de map ===
+  valores `id`; `receipt-{id}` (invoice.paid) intacto. Grep: ningún test
+  depende de IDs generados. Suite completa 558/558.
+- **Ítem 4 — Guardia de integridad de emisión:** (a) `verifyTotals` en
+  `domain/invoice.ts` (l.338-355, code `invoice.totals_drift`) ahora corre en
+  el reducer `invoice.issued` y rechaza cuando los totals del payload no
+  cuadran con las líneas; (b) `apply()` en `store.ts` gana un case `default:`
+  con assertNever (`unknown_event`) — antes un evento runtime desconocido era
+  aceptado en silencio (el switch exhaustivo solo compilaba, no protegía en
+  runtime). Tests RED primero en `packages/core/tests/store.test.ts`
+  (describe `"Integridad de emision (item 4)"`): espera
+  `["invoice.totals_drift"]` y `state.invoices.has("inv_drift") === false`;
+  y `["unknown_event"]` con `state.invoices.size === 0`. Verde verificado:
+  store.test.ts 36/36, suite completa **560/560 (41 files)**, typecheck 0.
+- **Ítem 5 — Docs (este cambio):** excepción del task-store documentada en
+  `AGENTS.md`; cifra real de la suite actualizada (560+).
+
+### Pendiente
+
+- **Ítem 6 — Verificación final y deploy:** `npm test` + `npm run typecheck`
+  + `npm run build` + deploy al vault activo (Cmd+R) — diferido al cierre
+  aprobado por Eduardo, sin commit/push (regla: solo con confirmación
+  explícita; `scripts/sync-push.sh` NO ejecutar).
+- **Staging — Ubicaciones secundarias en devoluciones/stock:** decisión
+  aprobada: `stockReturnLocationId` NO es PRIMARY → se valida/rechaza en
+  emisión (ya mantenido en el reducer histórico); soporte real de
+  localizaciones secundarias de retorno queda en BACKLOG, requiere TDD.
 
 ---
 

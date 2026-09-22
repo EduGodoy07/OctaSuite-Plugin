@@ -27,12 +27,22 @@
    - La verdad reside únicamente en el journal append-only (`octasuite-data/journal/{companyId}/*.jsonl`).
    - El estado en memoria (`State` en `store.ts`) es una proyección determinista y reconstruible.
    - Si un evento viola una regla o invariante, se rechaza (`RejectedEvent`), nunca se aborta en silencio.
+   - **Excepción documentada — Tareas (task-store):** los archivos de tareas en
+     `octasuite-data/tasks/{scope}/{id}.md` **NO** son una proyección del journal.
+     Son persistencia paralela deliberada (decisión F-01, 2026-09-05): tareas son
+     estado mutable de trabajo operativo en progreso, no contabilidad inmutable de
+     partida doble. Se escriben con la API nativa de Obsidian
+     (`vault.create`/`vault.modify`) y se parsean/serializan a `Task` de dominio
+     en `packages/obsidian-plugin/src/storage/task-store.ts`. **No migrar al
+     journal** — es excepción aprobada; un agente futuro no debe "arreglarla"
+     metiendo tareas al event sourcing (rompería lecturas Markdown, el .base de
+     Obsidian Bases y la portabilidad del vault).
 3. **Aritmética Monetaria:**
    - Montos siempre en enteros de unidad mínima (`minor: number, currency: CurrencyCode`).
    - Cero flotantes para dinero. Redondeo `HALF-UP` bancario idéntico a OctaSuite PHP.
 4. **Modelo de Autoridad (ADR-001):**
    - **Modo Personal (vigente):** 1 operador. Autoridad local en el vault vía `LocalNumberAuthority`.
-   - **Modo Conectado (futuro):** Varios operadores contra servidor OctaSuite vía `RemoteNumberAuthority`.
+   - **Modo Conectado (FUERA DE ALCANCE — plan B 2026-09-18):** Varios operadores contra servidor OctaSuite. La maquinaria fue eliminada del core; si algún día se retoma, se reintroduce con revisión de diseño.
 5. **Multi-Empresa:**
    - **1 Vault = 1 Grupo Empresarial.** Clientes distintos / auditorías van en vaults separados.
    - Journals particionados por empresa (`journal/{companyId}/`).
@@ -47,7 +57,8 @@
    - Ningún bug fix o cambio de dominio se considera completado sin:
      (a) Escribir primero un test de regresión que falle (RED).
      (b) Implementar el cambio hasta ponerlo en verde (GREEN).
-     (c) Verificar que la suite completa pase (268+ tests en verde).
+     (c) Verificar que la suite completa pase (560+ tests en verde — figura
+          real al 2026-09-13, 41 archivos de test).
 2. **Compilación y Tipos:**
    - `npm run typecheck` (`tsc -b packages/core packages/obsidian-plugin`) debe terminar con 0 errores bajo configuración TypeScript estricta (`noUncheckedIndexedAccess`).
 3. **Build y Despliegue:**
@@ -57,7 +68,12 @@
    - Todo cambio no trivial debe ser sometido a revisión de invariantes y edge cases antes de considerarse terminado.
 5. **Control de Versiones (Git):**
    - Repositorio remoto: `https://github.com/EduGodoy07/OctaSuite-Plugin`.
-   - Mirror local de git: `/tmp/octasuite-plugin-stage`.
+   - **Este directorio ES el repo git** (rama `staging`, trackeando `origin/staging`).
+     El `.git/` se creó el 2026-09-21 alineado con el contenido ya sincronizado; NO borrar `.git`.
+- **Topología de ramas:**
+      - `staging` = rama de desarrollo activa (monorepo `packages/*`). Flujo de trabajo: pull → cambio → commit → push.
+      - `main` = rama por defecto; migrada el 2026-09-21: adoptó el árbol del monorepo (staging) preservando el historial completo (merge, sin force-push). Su contenido ES el de `staging` (equivalencia verificada).
+    - **Flujo de trabajo:** `git pull` al empezar, `git status` para ver la deriva real, `git add/commit/push` directo desde este directorio.
    - **Regla:** Solo hacer commit y push con confirmación explícita de Eduardo.
 
 ---

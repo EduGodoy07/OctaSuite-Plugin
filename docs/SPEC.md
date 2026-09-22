@@ -13,6 +13,10 @@ Referencia de UX: [Expensica](https://github.com/dhruvir-zala/obsidian-expensica
 > El proyecto adoptó un modelo de dos modos (Personal / Conectado) documentado en
 > [`ADR-001`](ADR-001-modelo-de-autoridad.md), porque el requisito de varios
 > usuarios es incompatible con autoridad local sobre los correlativos.
+>
+> **Actualización 2026-09-18 (plan B):** el modo Conectado quedó **FUERA DE
+> ALCANCE** del core (decisión de Eduardo). Esta especificación describe
+> únicamente el modo Personal.
 
 ## 1. Qué es y qué no es
 
@@ -56,8 +60,10 @@ packages/obsidian-plugin   solo adaptador de UI
 ```
 
 El core no importa `obsidian`. Es la condición que permite: (a) probar las reglas
-sin Obsidian, (b) reutilizarlas en una versión web o desktop, (c) construir el
-exportador hacia la API v1 de OctaSuite sin duplicar lógica.
+sin Obsidian, (b) reutilizarlas en una versión web o desktop, (c) exportar a
+CSV/JSON sin duplicar lógica. La sincronización con la API v1 de OctaSuite quedó
+**descartada del alcance del plugin** (decisión futura, no planificada — ver
+`ADR-001`, actualización 2026-09-18).
 
 ---
 
@@ -207,7 +213,7 @@ FEL de SAT. El CUI del DPI usa otro algoritmo y **no** está implementado.
     Facturas del lado de las compras. `PaymentModal` es ahora compartido entre
     cobrar (Facturas/Caja) y pagar (Pagos), mismo flujo de forma de pago+fecha.
   - Captura rápida de gasto, bloque ```octasuite``` embebible, configuración.
-- `authority.ts` implementa el modelo de dos modos de `ADR-001`.
+- `authority.ts`: autoridad local síncrona, un solo modo (Personal). Ver `ADR-001`, actualización 2026-09-18.
 - `analytics.ts`: comparación contra el mismo día de la semana, tasa de
   clientes que vuelven (excluyendo consumidor final, que es anónimo), mezcla
   de formas de pago, series mensuales y diarias para los gráficos.
@@ -238,7 +244,5 @@ FEL de SAT. El CUI del DPI usa otro algoritmo y **no** está implementado.
    enlazarlas desde el vault.
 3. **v0.3** — facturación: modal de emisión, nota markdown por factura con
    frontmatter (para que Dataview la consulte), notas de crédito.
-4. **v0.4** — export: CSV/JSON y **exportador hacia la API v1 de OctaSuite**
-   (`admin/api/v1/...` con Sanctum), que es la ruta de graduación del cliente que
-   crece. Ver `docs/EXPORT.md` cuando exista.
+4. **v0.4** — export: CSV/JSON local. Ver `docs/EXPORT.md` cuando exista.
 5. **v0.5** — presupuestos, heatmap de calendario, export PDF.

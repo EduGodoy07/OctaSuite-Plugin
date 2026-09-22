@@ -6,6 +6,20 @@
 
 ---
 
+## Actualización 2026-09-18 (plan B — independencia)
+
+**El modo Conectado queda FUERA DE ALCANCE del core por decisión de Eduardo.**
+Se eliminó la maquinaria `RemoteNumberAuthority` / `Transport` /
+`assertSingleOperator` y `reserve()` volvió a ser síncrono. El conector al
+servidor OctaSuite (API v1 + Sanctum) **no se implementará en este repo**
+mientras el modo Personal no esté completo y estable; si algún día se retoma,
+se reintroduce con su propia revisión de diseño.
+
+Las secciones siguientes describen el diseño original (2026-08-25) y quedan
+como historial; el código vigente es el modo Personal únicamente.
+
+---
+
 ## Contexto
 
 El proyecto arrancó con tres requisitos que se contradicen entre sí:
@@ -155,3 +169,17 @@ correr `npm run deploy` como último paso de cualquier cambio visible en la UI.
 De paso quedó sin escribir el CSS del punto de venta (`octa-pos-item`,
 `octa-cart-row`, `octa-filter-chip`, etc.) — la vista de Caja habría abierto
 sin estilo. Se agregó al cerrar este incidente.
+
+**Resolución verificada (2026-09-04):** las tres clases del incidente ya
+existen y se estilan (`styles.css:629-735`: `.octa-pos`, `.octa-pos-grid`,
+`.octa-pos-item`, `.octa-pos-item-name`, `.octa-pos-item-price`,
+`.octa-pos-cart`, `.octa-cart-row`, `.octa-cart-main`, `.octa-cart-controls`,
+`.octa-cart-actions`, `.octa-filter-chip`), consumidas por
+`register-view.ts:258-373`. La verificación reveló además un gap transversal
+que el incidente no capturó: `octa-num` (cifras de caja/carrito/factura/nómina)
+solo tenía definición dentro de tablas (`.octa-table .octa-num`, `styles.css:252`);
+se agregó la variante global `.octa-num { font-variant-numeric: tabular-nums; }`
+(`styles.css:1099`) para alinear las cifras fuera de tablas (`octa-total-row`,
+`octa-cart-row`, resumen de caja). No contradice la regla de tabla (especificidad
+superior la complementa). Deploy verificado en el vault
+(`.obsidian/plugins/octasuite-lite/styles.css:1099`).
