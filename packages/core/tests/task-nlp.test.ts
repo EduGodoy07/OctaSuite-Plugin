@@ -88,4 +88,70 @@ describe("task-nlp: Parser de lenguaje natural para tareas", () => {
     expect(res.tags).toEqual(["fiscal", "sat"]);
     expect(res.due).toBe("2026-09-06");
   });
+
+  // ===== Soporte EN (F2a) =====
+
+  it("EN: reconoce fechas relativas today y tomorrow", () => {
+    const r1 = parseNaturalTask("Call supplier today", REF_DATE);
+    expect(r1.title).toBe("Call supplier");
+    expect(r1.due).toBe("2026-09-05");
+
+    const r2 = parseNaturalTask("Invoice A-10 tomorrow", REF_DATE);
+    expect(r2.title).toBe("Invoice A-10");
+    expect(r2.due).toBe("2026-09-06");
+  });
+
+  it("EN: reconoce day after tomorrow", () => {
+    const res = parseNaturalTask("Deliver order day after tomorrow", REF_DATE);
+    expect(res.title).toBe("Deliver order");
+    expect(res.due).toBe("2026-09-07");
+  });
+
+  it("EN: reconoce next week", () => {
+    const res = parseNaturalTask("Quarterly review next week", REF_DATE);
+    expect(res.title).toBe("Quarterly review");
+    expect(res.due).toBe("2026-09-12"); // sábado 05 + 7 días
+  });
+
+  it("EN: reconoce 'in N days' y 'in N weeks'", () => {
+    const r1 = parseNaturalTask("Cash audit in 3 days", REF_DATE);
+    expect(r1.title).toBe("Cash audit");
+    expect(r1.due).toBe("2026-09-08");
+
+    const r2 = parseNaturalTask("Renew contract in 2 weeks", REF_DATE);
+    expect(r2.title).toBe("Renew contract");
+    expect(r2.due).toBe("2026-09-19");
+  });
+
+  it("EN: reconoce días de la semana (próximo día)", () => {
+    // 2026-09-05 es Sábado. El próximo lunes es 2026-09-07.
+    const r1 = parseNaturalTask("Team meeting Monday", REF_DATE);
+    expect(r1.title).toBe("Team meeting");
+    expect(r1.due).toBe("2026-09-07");
+
+    // El próximo viernes es 2026-09-11.
+    const r2 = parseNaturalTask("Payroll Friday", REF_DATE);
+    expect(r2.title).toBe("Payroll");
+    expect(r2.due).toBe("2026-09-11");
+  });
+
+  it("EN: 'next <weekday>' se resuelve al próximo día de esa semana", () => {
+    const res = parseNaturalTask("Board prep next monday", REF_DATE);
+    expect(res.title).toBe("Board prep");
+    expect(res.due).toBe("2026-09-07");
+  });
+
+  it("EN: reconoce prioridad medium como normal", () => {
+    const res = parseNaturalTask("Archive old files !medium", REF_DATE);
+    expect(res.title).toBe("Archive old files");
+    expect(res.priority).toBe("normal");
+  });
+
+  it("EN: combina prioridad, scope y due date", () => {
+    const res = parseNaturalTask("File VAT return @global tomorrow !high", REF_DATE);
+    expect(res.title).toBe("File VAT return");
+    expect(res.scope).toBe("global");
+    expect(res.due).toBe("2026-09-06");
+    expect(res.priority).toBe("high");
+  });
 });

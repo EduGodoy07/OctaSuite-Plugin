@@ -14,22 +14,30 @@ const PRIORITY_TOKENS: Record<string, TaskPriority> = {
   urgente: "urgent",
   high: "high",
   alta: "high",
-  normal: "normal",
+  medium: "normal",
   media: "normal",
+  normal: "normal",
   low: "low",
   baja: "low",
 };
 
 const WEEKDAYS: Record<string, number> = {
   domingo: 0,
+  sunday: 0,
   lunes: 1,
+  monday: 1,
   martes: 2,
+  tuesday: 2,
   miercoles: 3,
   miércoles: 3,
+  wednesday: 3,
   jueves: 4,
+  thursday: 4,
   viernes: 5,
+  friday: 5,
   sabado: 6,
   sábado: 6,
+  saturday: 6,
 };
 
 function addDays(base: Date, days: number): Date {
@@ -45,13 +53,13 @@ function nextWeekday(base: Date, targetDay: number): Date {
 
 /**
  * Parsea una entrada de texto en lenguaje natural para extraer metadatos de tarea.
- * Reconoce:
- * - Prioridades: `!urgent`, `!alta`, `!baja`, etc.
+ * Soporta español e inglés. Reconoce:
+ * - Prioridades: `!urgent`, `!alta`, `!baja`, `!medium`, etc.
  * - Ámbito / Scope: `@global`, `@principal`, etc.
  * - Etiquetas / Tags: `#fiscal`, `#sat`, etc.
  * - Fechas ISO: `YYYY-MM-DD`
- * - Fechas relativas: `hoy`, `mañana`, `pasado mañana`, `en N días`, `en N semanas`
- * - Días de la semana: `(el) lunes`, `viernes`, etc. (calcula el próximo día correspondiente)
+ * - Fechas relativas: `hoy`/`today`, `mañana`/`tomorrow`, `pasado mañana`/`day after tomorrow`, `en N días`/`in N days`, `en N semanas`/`in N weeks`, `next week`
+ * - Días de la semana: `(el) lunes`, `monday`, `next friday`, etc. (calcula el próximo día correspondiente; `next <weekday>` se resuelve al mismo próximo día)
  */
 export function parseNaturalTask(
   input: string,
@@ -91,13 +99,13 @@ export function parseNaturalTask(
     return "";
   });
 
-  // 5. Expresiones relativas: "en N días" o "en N semanas"
+  // 5. Expresiones relativas: "en N días" / "in N days", "en N semanas" / "in N weeks" o "next week"
   text = text.replace(
-    /(?:^|\s)en\s+(\d+)\s+(d[ií]as?|semanas?)(?=\s|$)/i,
+    /(?:^|\s)(?:en|in)\s+(\d+)\s+(d[ií]as?|days?|semanas?|weeks?)(?=\s|$)/i,
     (_match, countStr: string, unit: string) => {
       const count = parseInt(countStr, 10);
       if (Number.isFinite(count) && count > 0) {
-        if (/semana/i.test(unit)) {
+        if (/semana|week/i.test(unit)) {
           due = toIsoDate(addDays(referenceDate, count * 7));
         } else {
           due = toIsoDate(addDays(referenceDate, count));
@@ -106,22 +114,26 @@ export function parseNaturalTask(
       return "";
     },
   );
+  text = text.replace(/(?:^|\s)next\s+week(?=\s|$)/i, () => {
+    due = toIsoDate(addDays(referenceDate, 7));
+    return "";
+  });
 
-  // 6. Fechas relativas inmediatas: "pasado mañana", "mañana", "hoy"
-  if (/(?:^|\s)pasado\s+mañana(?=\s|$)/i.test(text)) {
+  // 6. Fechas relativas inmediatas: "pasado mañana"/"day after tomorrow", "mañana"/"tomorrow", "hoy"/"today"
+  if (/(?:^|\s)(?:pasado\s+mañana|day\s+after\s+tomorrow)(?=\s|$)/i.test(text)) {
     due = toIsoDate(addDays(referenceDate, 2));
-    text = text.replace(/(?:^|\s)pasado\s+mañana(?=\s|$)/i, "");
-  } else if (/(?:^|\s)mañana(?=\s|$)/i.test(text)) {
+    text = text.replace(/(?:^|\s)(?:pasado\s+mañana|day\s+after\s+tomorrow)(?=\s|$)/i, "");
+  } else if (/(?:^|\s)(?:mañana|tomorrow)(?=\s|$)/i.test(text)) {
     due = toIsoDate(addDays(referenceDate, 1));
-    text = text.replace(/(?:^|\s)mañana(?=\s|$)/i, "");
-  } else if (/(?:^|\s)hoy(?=\s|$)/i.test(text)) {
+    text = text.replace(/(?:^|\s)(?:mañana|tomorrow)(?=\s|$)/i, "");
+  } else if (/(?:^|\s)(?:hoy|today)(?=\s|$)/i.test(text)) {
     due = toIsoDate(referenceDate);
-    text = text.replace(/(?:^|\s)hoy(?=\s|$)/i, "");
+    text = text.replace(/(?:^|\s)(?:hoy|today)(?=\s|$)/i, "");
   }
 
-  // 7. Días de la semana: "(el) lunes", "(el) viernes", etc.
+  // 7. Días de la semana: "(el) lunes", "monday", "next friday", etc.
   const weekdayRegex = new RegExp(
-    `(?:^|\\s)(?:el\\s+)?(${Object.keys(WEEKDAYS).join("|")})(?=\\s|$)`,
+    `(?:^|\\s)(?:(?:el|next)\\s+)?(${Object.keys(WEEKDAYS).join("|")})(?=\\s|$)`,
     "i",
   );
   const weekdayMatch = text.match(weekdayRegex);

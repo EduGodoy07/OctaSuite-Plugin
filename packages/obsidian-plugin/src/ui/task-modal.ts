@@ -7,7 +7,8 @@ import {
   type TaskPriority,
   type TaskStatus,
 } from "@octasuite/core";
-import { App, Modal, Setting } from "obsidian";
+import { App, Modal, Notice, Setting, type DropdownComponent, type TextComponent } from "obsidian";
+import { applyNaturalToForm } from "./task-natural";
 
 const STATUS_LABEL: Record<TaskStatus, string> = {
   open: "Abierta",
@@ -42,6 +43,9 @@ type Editable = {
 export class TaskModal extends Modal {
   private form: Editable;
   private errorsEl!: HTMLElement;
+  private titleInput!: TextComponent;
+  private priorityDD!: DropdownComponent;
+  private dueInput!: TextComponent;
 
   constructor(
     app: App,
@@ -72,8 +76,9 @@ export class TaskModal extends Modal {
     const title = new Setting(this.contentEl)
       .setName("Título")
       .addText((text) => {
+        this.titleInput = text;
         text
-          .setPlaceholder("¿Qué hay que hacer?")
+          .setPlaceholder("¿Qué hay que hacer? (ej. Pagar SAT mañana !alta)")
           .setValue(this.form.title)
           .onChange((v) => {
             this.form.title = v;
@@ -81,7 +86,7 @@ export class TaskModal extends Modal {
         text.inputEl.addEventListener("keydown", (ev) => {
           if (ev.key === "Enter") {
             ev.preventDefault();
-            void this.submit();
+            this.handleTitleEnter();
           }
         });
       });
@@ -106,6 +111,7 @@ export class TaskModal extends Modal {
         }
         dd.setValue(this.form.priority).onChange((v) => {
           this.form.priority = v as TaskPriority;
+          this.priorityDD = dd;
         });
       });
 
@@ -118,6 +124,7 @@ export class TaskModal extends Modal {
           .onChange((v) => {
             this.form.due = v;
           });
+        this.dueInput = text;
       });
 
     new Setting(this.contentEl)
@@ -145,6 +152,38 @@ export class TaskModal extends Modal {
 
   override onClose(): void {
     this.contentEl.empty();
+  }
+
+  private handleTitleEnter(): void {
+    const next = applyNaturalToForm(this.form.title, {
+      title: this.form.title,
+      priority: this.form.priority,
+      due: this.form.due,
+    });
+    if (next === null) {
+      // Sin tokens NL: comportamiento original, submit directo.
+      void this.submit();
+      return;
+    }
+    // Autofill NL: aplica los campos parseados al form y a los controles,
+    // deja el modal abierto para que Eduardo confirme antes de guardar.
+    const prevPriority = this.form.priority;
+    const prevDue = this.form.due;
+    this.form.title = next.title;
+    this.form.priority = next.priority;
+    this.form.due = next.due;
+    this.titleInput.setValue(next.title);
+    this.priorityDD.setValue(next.priority);
+    this.dueInput.setValue(next.due);
+    const parts: string[] = [];
+    if (next.due !== "" && next.due !== prevDue) parts.push(`vence ${next.due}`);
+    if (next.priority !== prevPriority) parts.push(`prioridad ${PRIORITY_LABEL[next.priority]}`);
+    new Notice(
+      parts.length > 0
+        ? `Tarea: ${next.title} — ${parts.join(", ")}. Enter para guardar.`
+        : `Tarea: ${next.title} — Enter para guardar.`,
+      5000,
+    );
   }
 
   private buildDraft(): TaskDraft {
