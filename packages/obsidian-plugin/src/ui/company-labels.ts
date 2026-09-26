@@ -16,6 +16,28 @@ export function companyLabel(companyId: string): string {
 }
 
 /**
+ * Nombre visible de una empresa para documentos y reportes. Resuelve el nombre
+ * real del negocio con esta prioridad:
+ *   1. nombre real del journal (`State.companies[id].name`, el que se guardó en
+ *      el evento `company.created` al dar de alta la empresa);
+ *   2. para la principal (legacy, sin `company.created` en su journal), el
+ *      nombre comercial de settings (`companyName`);
+ *   3. fallback al label técnico (`companyLabel`).
+ * El nombre comercial global de settings NO se aplica a empresas no-principales:
+ * para ellas, el journal es la única fuente del nombre real.
+ */
+export function companyDisplayName(
+  companyId: string,
+  journalName: string | undefined,
+  settingsCompanyName: string,
+): string {
+  const real = journalName?.trim();
+  if (real) return real;
+  if (companyId === DEFAULT_COMPANY_ID && settingsCompanyName.trim()) return settingsCompanyName.trim();
+  return companyLabel(companyId);
+}
+
+/**
  * Texto del chip que resume la selección activa. Siempre dice CUÁLES empresas
  * están seleccionadas (antes, con más de una, solo decía "N empresas" y los
  * nombres quedaban únicamente en el tooltip).

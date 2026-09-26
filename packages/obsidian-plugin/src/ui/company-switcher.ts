@@ -4,7 +4,7 @@ import type { PluginHost } from "./host.js";
 
 // Re-export para compatibilidad con las vistas que importan companyLabel desde
 // este archivo (reports-view, launcher-view, accounting-view).
-export { companyLabel } from "./company-labels.js";
+export { companyDisplayName, companyLabel } from "./company-labels.js";
 
 /**
  * Selector multi-empresa reutilizable: un botón que resume la selección y un

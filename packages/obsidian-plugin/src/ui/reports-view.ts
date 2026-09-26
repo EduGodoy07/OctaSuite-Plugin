@@ -17,7 +17,7 @@ import {
 import { ItemView, Notice, WorkspaceLeaf } from "obsidian";
 import { CREDIT_NOTES_VIEW_TYPE, REPORTS_VIEW_TYPE } from "../modules.js";
 import { DEFAULT_COMPANY_ID } from "../storage/vault-journal.js";
-import { companyLabel } from "./company-switcher.js";
+import { companyDisplayName, companyLabel } from "./company-switcher.js";
 import type { PluginHost } from "./host.js";
 import { donut, groupedBars, monthHeatmap } from "./charts.js";
 import { moduleHeader } from "./nav.js";
@@ -280,7 +280,13 @@ export class ReportsView extends ItemView {
       month: this.month,
       currency,
       locale,
-      companies: this.host.activeCompanyIds.map(companyLabel),
+      companies: this.host.activeCompanyIds.map((id) =>
+        companyDisplayName(
+          id,
+          this.host.statesByCompany.get(id)?.companies.get(id)?.name,
+          this.host.settings.companyName,
+        ),
+      ),
       kpis: [
         { label: "Facturado", value: format(facturado, locale) },
         { label: "Gastos", value: format(gastos, locale) },

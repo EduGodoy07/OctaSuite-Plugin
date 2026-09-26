@@ -72,6 +72,20 @@ describe("reportMarkdown", () => {
 });
 
 describe("reportCsv", () => {
+  it("incluye una sección de cabecera con período, empresas y moneda", () => {
+    const csv = reportCsv(base);
+    expect(csv).toContain("# Reporte");
+    expect(csv).toContain("Mes,2026-09");
+    expect(csv).toContain("Empresas,Principal");
+    expect(csv).toContain("Moneda,GTQ");
+  });
+
+  it("escapa el listado de varias empresas en la cabecera (CSV válido)", () => {
+    const multi = { ...base, companies: ["The Arepa Factory", "GoldenLeaf"] };
+    const csv = reportCsv(multi);
+    expect(csv).toContain('Empresas,"The Arepa Factory, GoldenLeaf"');
+  });
+
   it("tiene una sección por bloque con cabecera y filas", () => {
     const csv = reportCsv(base);
     expect(csv).toContain("# Tendencia");

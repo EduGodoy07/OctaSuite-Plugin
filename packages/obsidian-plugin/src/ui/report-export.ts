@@ -120,6 +120,14 @@ export function reportMarkdown(input: ReportInput): string {
 export function reportCsv(input: ReportInput): string {
   const parts: string[] = [];
 
+  // Cabecera con la misma info que el encabezado del markdown: período,
+  // empresas consolidadas (nombres reales resueltos por el caller) y moneda.
+  // Para que un CSV adjuntado a trámites nunca pierda el contexto de su origen.
+  parts.push("# Reporte");
+  parts.push(`Mes,${csvCell(input.month)}`);
+  parts.push(`Empresas,${csvCell(input.companies.join(", "))}`);
+  parts.push(`Moneda,${csvCell(input.currency)}`);
+
   const keyValue = (rows: readonly ReportKpi[]) => rows.map((r) => `${csvCell(r.label)},${csvCell(r.value)}`).join("\n");
   parts.push("# KPIs");
   parts.push(keyValue(input.kpis));
