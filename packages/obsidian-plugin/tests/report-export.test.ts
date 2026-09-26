@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { reportCsv, reportMarkdown } from "../src/ui/report-export";
+import { reportCsv, reportFileName, reportMarkdown } from "../src/ui/report-export";
 import type { ReportInput } from "../src/ui/report-export";
 
 const base: ReportInput = {
@@ -91,5 +91,21 @@ describe("reportCsv", () => {
     expect(csv).toContain('Facturado,"Q 12,350.00"');
     expect(csv).toContain("Documentos,Identificados,Vuelven,Ticket promedio");
     expect(csv).toContain('7,3,33%,"Q 1,764.29"');
+  });
+});
+
+describe("reportFileName", () => {
+  it("genera el nombre del reporte Markdown sin incluir carpetas", () => {
+    const name = reportFileName("2026-09", "md");
+    expect(name).toBe("reporte-2026-09.md");
+    // Aserción clave contra la regresión del folder duplicado (P0 de 2026-09-26):
+    // el caller arma el path base aparte, nunca debe venir con "/" desde acá.
+    expect(name).not.toContain("/");
+  });
+
+  it("genera el nombre de las tablas CSV sin incluir carpetas", () => {
+    const name = reportFileName("2026-09", "csv");
+    expect(name).toBe("tablas-2026-09.csv");
+    expect(name).not.toContain("/");
   });
 });

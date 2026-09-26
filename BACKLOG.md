@@ -18,14 +18,49 @@ funcional** es comparable al de una suite comercial.
 **Moat que no se toca:** localización guatemalteca (NIT, IVA 12%, FEL/DTE,
 IGSS, bono 14) — ninguna plataforma de las comunidades comparadas la tiene.
 
-**Lo que la profundidad NO tiene todavía** (verificado con grep, 2026-09-04):
+**Lo que la profundidad NO tiene todavía** (re-verificado contra el código real el
+2026-09-26; el bloque de 2026-09-04 quedó congelado y los 5 ítems de esa lista ya
+no eran ciertos — corrección documentada más abajo):
 
-- `discount|descuento` solo existe en `domain/payroll.ts` y `ui/reward-modal.ts`
-  → descuento por línea en ventas NO existe.
-- `store credit|crédito de cliente|customerCredit` → 0 hits.
-- `pricelist|lista de precio|precio por cliente` → 0 hits.
-- Export PDF de reportes → no verificado (hay `reports-view.ts`, sin export).
-- Refund/devolución → existe solo nota de crédito (`credit-note-modal.ts`).
+- **B-08 · Rutas con geolocalización** → es lo único pendiente real de P2.
+  Verificado: 0 hits de `geoloc|latitude|longitude` en `packages/core/src`,
+  `packages/obsidian-plugin/src` y ambos directorios `tests/`. No existe entidad
+  de ruta, ni paradas, ni captura de coordenadas.
+- **Export PDF nativo** → no existe, y no se implementó a propósito (decisión B-04:
+  evitar librería de render en un plugin de 8GB). El export es Markdown + CSV al
+  vault; el botón "MD" se rotula "imprimible a PDF desde Obsidian" (impresión del
+  navegador, no PDF generado por el plugin).
+- **Descuento por línea en receipts (entradas)** → sigue sin capturarse. El campo
+  existe solo como proyección **readonly** (`ReceiptLineData.discount` en
+  `packages/core/src/store.ts`); `ui/receipt-modal.ts` tiene 0 ocurrencias de
+  `discount` (no hay UI para cargarlo). Es el "posible B-06" que B-02 dejó fuera.
+
+**Ítems del bloque de 2026-09-04 que ya NO son ciertos** (corregidos 2026-09-26,
+con la evidencia real de cada uno):
+
+- ~~`discount|descuento` solo existe en `domain/payroll.ts`~~ → **B-02 DONE**:
+  `LineDiscount` (percent y/o amount minor, combinables) en
+  `packages/core/src/domain/invoice.ts` (12 ocurrencias de `discount`).
+- ~~`store credit|crédito de cliente|customerCredit` → 0 hits~~ → **B-01 DONE**:
+  `domain/credit.ts` (35 líneas), `creditAccounts` + `creditAccountByPartner` en
+  `store.ts`, tender "Crédito" en `ui/register-view.ts`, abono desde
+  `ui/partners-view.ts`, `CreditNoteType` con `"store_credit"` en
+  `domain/invoice.ts:174`.
+- ~~`pricelist|lista de precio|precio por cliente` → 0 hits~~ → **B-03 DONE**:
+  `packages/core/src/domain/pricelist.ts` (81 líneas) + `VaultPricelists` +
+  `PricelistManagerModal` + `pricelistId` en `domain/partner.ts`.
+- ~~Export PDF de reportes → no verificado (hay `reports-view.ts`, sin export)~~ →
+  **B-04 DONE en MD+CSV (PDF no implementado, por decisión):** sí hay export, en
+  MD y CSV (`ui/report-export.ts` con
+  `reportMarkdown` / `reportCsv` / `writeReportToVault`; botones "MD"/"CSV" en
+  `ui/reports-view.ts` líneas 79-82, que escriben `reporte-{month}.md` y
+  `tablas-{month}.csv` en `{dataFolder}/reports`). Lo que no existe es el PDF
+  nativo (ver arriba).
+- ~~Refund/devolución → existe solo nota de crédito (`credit-note-modal.ts`)~~ →
+  **B-05 DONE**: `CreditNoteType = "store_credit" | "refund" | "exchange"`
+  (`domain/invoice.ts:174`) con `exchangeLines` (línea 170) y `tenderRefund`
+  (línea 168), validaciones `credit_note.refund_requires_tender` /
+  `credit_note.tender_amount_mismatch`.
 
 ---
 
@@ -151,46 +186,108 @@ IGSS, bono 14) — ninguna plataforma de las comunidades comparadas la tiene.
   `packages/obsidian-plugin/src/ui/payroll-view.ts` (orgchart SVG + modal
   adjuntos + columna expediente), `styles.css` (nuevas clases).
 - **Suite:** typecheck 0 errores, 522/522 tests pasando, build+deploy OK.
-- **Bonus (posible bug latente aparte, NO tocado):** `writeReportToVault`
-  (`report-export.ts`) llama `vault.createFolder(folder)` sin chequear si la
-  carpeta ya existe — en Obsidian real `createFolder` lanza si existe, y el
-  test `reports-vault.test.ts` lo enmascara simulando idempotencia. Debería
-  revisarse en otro cambio.
+- **Bonus (bug latente aparte):** `writeReportToVault` (`report-export.ts`)
+  llamaba `vault.createFolder(folder)` sin chequear si la carpeta ya existe — en
+  Obsidian real `createFolder` lanza si existe, y el test
+  `reports-vault.test.ts` lo enmascaraba simulando idempotencia. **CORREGIDO el
+  2026-09-26** (TDD RED→GREEN): ver "Bug latente corregido (2026-09-26)" en la
+  sección de remediación GLM.
 - **Pendiente para push:** confirmación explícita de Eduardo (`scripts/sync-push.sh`).
 
 ### B-03 · Dual pricing / listas de precios por cliente
 - **Por qué:** Square pide precio in-store vs online; Odoo lo resuelve con
   pricelists. Es la base para B2B vs retail.
-- **Estado:** no existe (`pricelist` → 0 hits).
-- **Alcance probable:** pricelist por partner o grupo; override por producto;
-  precio de venta resuelto en el momento de crear invoice/receipt; sin tocar
-  el costo (costing sigue en el producto).
-- **Archivos:** `packages/core/src/domain/product.ts`, `domain/partner.ts`,
-  `ui/product-modal.ts`, `ui/customer-picker.ts`, `ui/receipt-modal.ts`.
-- **Dependencias:** ideal tras B-02 (misma zona de líneas de venta).
+- **Estado:** DONE (2026-09-21, commit `7a8b730`) — dominio
+  `packages/core/src/domain/pricelist.ts` (81 líneas): `Pricelist`
+  (`id`/`name`/`factorBps`/`overrides`), `PricelistOverride`, `PricelistDraft`,
+  `applyPricelist(pricelist, product)` (resuelve precio de venta: override por
+  producto si existe, si no factor global en bps con `roundHalfUp`, si no
+  `salePrice` del producto) y `validatePricelistDraft` con errores
+  `pricelist.name_required` / `pricelist.factor_invalid` /
+  `pricelist.price_negative`. Exportado desde `packages/core/src/index.ts:15`.
+  Vínculo con el cliente: `pricelistId?: string` en `Partner` y `PartnerDraft`
+  (`domain/partner.ts:26-27,50`). Persistencia offline en el vault (archivo JSON,
+  sin servidor): `packages/obsidian-plugin/src/storage/vault-pricelists.ts`
+  (99 líneas) → `{dataFolder}/catalogs/pricelists.json`, carga tolerante (repara
+  filas inválidas) y `save` encolado por serie. UI:
+  `packages/obsidian-plugin/src/ui/pricelist-manager-modal.ts` (261 líneas,
+  alta/edición de la lista con factor y overrides), integrada en
+  `ui/products-view.ts` y `ui/partner-modal.ts`; `VaultPricelists` cableado en
+  `main.ts` (`get pricelists()`) y expuesto por `ui/host.ts`. **No toca el
+  costo**: el costing sigue en el producto (fuera de alcance por diseño).
+  Evidencia: `packages/core/tests/pricelist.test.ts` (10 tests) +
+  `packages/obsidian-plugin/tests/vault-pricelists.test.ts` (6 tests),
+  verificados en verde en la corrida del 2026-09-26.
+- **Alcance realizado:** lista de precios por partner; factor global en bps +
+  override por producto; precio de venta resuelto al facturar; catálogo en el
+  vault. Queda fuera: aplicar la lista en receipts/entradas, versionado del
+  catálogo, y permissionamiento por rol.
+- **Archivos:** `packages/core/src/domain/pricelist.ts`,
+  `packages/core/tests/pricelist.test.ts`, `domain/partner.ts`, `index.ts`,
+  `packages/obsidian-plugin/src/storage/vault-pricelists.ts`,
+  `packages/obsidian-plugin/tests/vault-pricelists.test.ts`,
+  `ui/pricelist-manager-modal.ts`, `ui/products-view.ts`, `ui/partner-modal.ts`,
+  `main.ts`, `ui/host.ts`.
+- **Dependencias:** ninguna externa. Reutiliza `Money`/`roundHalfUp` del core
+  (misma aritmética minor-unit, sin flotantes). B-02 no era bloqueante.
 
 ### B-04 · Reportes profesionales exportables (PDF/CSV)
 - **Por qué:** gap "básico" en todas las comunidades; en GT los reportes se
   adjuntan a trámites (SAT, bancos).
-- **Estado:** `reports-view.ts` existe; export no verificado. La exportación
-  puede ser markdown/CSV vía vault (sin servidor) y/o PDF si se acepta
-  dependencia de render (decidir si entra o se deja en `soon`).
-- **Alcance probable:** export CSV/Markdown nativo (vault, offline); opción
-  PDF como `soon` si requiere librería pesada (8GB RAM).
-- **Archivos:** `packages/obsidian-plugin/src/ui/reports-view.ts`.
-- **Dependencias:** ninguno.
+- **Estado:** DONE (2026-09-21, commit `7a8b730`) para MD + CSV; el **PDF nativo
+  se decidió NO hacerlo** (librería de render innecesaria para un plugin
+  offline-first; el Markdown se imprime a PDF desde Obsidian, y el botón lo dice
+  explícitamente en su `title`). Implementación:
+  `packages/obsidian-plugin/src/ui/report-export.ts` (187 líneas) con
+  `reportMarkdown(input)` (KPIs, tendencia 12 meses, gasto por categoría, formas
+  de pago, clientes, gasto por día, huecos del correlativo),
+  `reportCsv(input)` (mismas secciones, celdas escapadas con `csvCell`) y
+  `writeReportToVault(vault, folder, filename, content)` (create/modify).
+  Función pura: recibe los datos ya calculados y formateados por la vista, sin
+  duplicar la lógica de consolidación. Botones "MD" y "CSV" en
+  `ui/reports-view.ts` (líneas 79-82) → `exportReport("md" | "csv")` escribe
+  `reporte-{YYYY-MM}.md` / `tablas-{YYYY-MM}.csv` en `{dataFolder}/reports` y
+  avisa con `Notice`. Evidencia: `packages/obsidian-plugin/tests/report-export.test.ts`
+  (7 tests) + `reports-vault.test.ts` (5 tests, incluye el fix de
+  `createFolder` del 2026-09-26 documentado más abajo).
+- **Alcance realizado:** export MD + CSV al vault, sin servidor y sin
+  dependencia nueva. Queda fuera: PDF nativo, export a XLSX, envío por correo.
+- **Archivos:** `packages/obsidian-plugin/src/ui/report-export.ts`,
+  `packages/obsidian-plugin/tests/report-export.test.ts`,
+  `packages/obsidian-plugin/tests/reports-vault.test.ts`, `ui/reports-view.ts`.
+- **Dependencias:** ninguna. Reusa las proyecciones de `store.ts` que la vista
+  ya pintaba en pantalla.
 
 ### B-05 · Refund/devolución flexible
 - **Por qué:** pedido recurrente; Square permite devolución a crédito, a
   tender original o exchange.
-- **Estado:** parcial — existe nota de crédito (`credit-note-modal.ts`).
-- **Alcance probable:** extender a exchange (cambio de producto con
-  diferencia), devolución de stock a localización, devolución parcial por
-  tenders con monto exacto. Reglas de journal para no romper partida doble.
-- **Archivos:** `packages/core/src/domain/invoice.ts`, `domain/stock.ts`,
-  `ui/credit-note-modal.ts`.
-- **Dependencias:** ninguna; puede apoyarse en B-01 (crédito como destino de
-  devolución).
+- **Estado:** DONE (2026-09-21, commit `7a8b730`) — la nota de crédito dejó de
+  ser un único caso: `CreditNoteType = "store_credit" | "refund" | "exchange"`
+  (`packages/core/src/domain/invoice.ts:174`) con payload extendido:
+  `tenderRefund?: TenderRefund` (línea 168) y `exchangeLines?: readonly ExchangeLine[]`
+  (línea 170). Validaciones de dominio: `credit_note.refund_requires_tender`
+  (línea 225) y `credit_note.tender_amount_mismatch` (línea 227, el monto del
+  tender debe cuadrar con el total), más la rama de `exchangeLines` (línea 238).
+  Evento `invoice.refunded` extendido (nota en `packages/core/src/events.ts:107`)
+  y proyección en `store.ts:600` que distingue `store_credit` (destino: cuenta
+  de crédito del cliente) de `refund`/`exchange` sin re-proyectar. UI: selector
+  de tipo en `ui/credit-note-modal.ts:19` ("Crédito cliente (saldo a favor)"),
+  etiqueta por tipo en `ui/credit-notes-view.ts:13`, y emisión con tipo
+  explícito desde `ui/invoices-view.ts:241`. Evidencia:
+  `packages/core/tests/refund.test.ts` (15 tests) +
+  `packages/core/tests/credit.test.ts` (10 tests), en verde en la corrida del
+  2026-09-26.
+- **Alcance realizado:** los tres destinos (crédito / tender original / exchange
+  con líneas de cambio); devolución por tenders con monto exacto validado; nota
+  de crédito como destino de la devolución (apoyado en B-01). Queda fuera:
+  ubicaciones secundarias de retorno de stock (ver "Pendiente" de la auditoría
+  GLM) y exchange parcial con múltiplos productos.
+- **Archivos:** `packages/core/src/domain/invoice.ts`,
+  `packages/core/tests/refund.test.ts`, `packages/core/src/events.ts`,
+  `packages/core/src/store.ts`, `packages/obsidian-plugin/src/ui/credit-note-modal.ts`,
+  `ui/credit-notes-view.ts`, `ui/invoices-view.ts`.
+- **Dependencias:** se apoyó en B-01 (crédito de cliente) para el destino
+  `store_credit`. Sin dependencias externas.
 
 ### B-08 · Rutas con geolocalización
 - **Por qué:** pedido de Eduardo (2026-09-18). Para field service / entregas /
@@ -213,8 +310,9 @@ IGSS, bono 14) — ninguna plataforma de las comunidades comparadas la tiene.
 ## Remediación de auditoría GLM 5.3 (2026-09-13)
 
 Auditoría de invariantes/estado (GLM 5.3) sobre OctaSuite Lite — 6 ítems de
-remediación con TDD estricto RED→GREEN. Ítems 1-5 implementados; el 6 (deploy)
-queda pendiente de confirmación final.
+remediación con TDD estricto RED→GREEN. Ítems 1-5 implementados; el 6 (build +
+deploy) quedó verificado el 2026-09-26 contra el commit `4e56ee1` (ver
+"Pendiente" más abajo).
 
 ### Ítems implementados (evidencia real, no assert)
 
@@ -247,20 +345,103 @@ queda pendiente de confirmación final.
   (describe `"Integridad de emision (item 4)"`): espera
   `["invoice.totals_drift"]` y `state.invoices.has("inv_drift") === false`;
   y `["unknown_event"]` con `state.invoices.size === 0`. Verde verificado:
-  store.test.ts 36/36, suite completa **560/560 (41 files)**, typecheck 0.
+  store.test.ts 36/36, suite completa **560/560 (41 files)** — cifras de esa
+  corrida (2026-09-13); la cifra vigente es **583/583 (45 files)**, verificada
+  el 2026-09-26 —, typecheck 0.
 - **Ítem 5 — Docs (este cambio):** excepción del task-store documentada en
-  `AGENTS.md`; cifra real de la suite actualizada (560+).
+  `AGENTS.md`; cifra real de la suite actualizada (560+). **Actualizado
+  2026-09-26:** la cifra vigente es **583 tests / 45 archivos** (verificada con
+  `npm test` + `npm run typecheck` en esa corrida). `AGENTS.md` sigue con
+  "560+ / 41 archivos" porque ese archivo no se editó en esta corrida.
 
 ### Pendiente
 
-- **Ítem 6 — Verificación final y deploy:** `npm test` + `npm run typecheck`
-  + `npm run build` + deploy al vault activo (Cmd+R) — diferido al cierre
-  aprobado por Eduardo, sin commit/push (regla: solo con confirmación
-  explícita; `scripts/sync-push.sh` NO ejecutar).
+- **Ítem 6 — Verificación final y deploy: DONE para el estado de `4e56ee1`,
+  verificado 2026-09-26.** Evidencia real (comandos corridos en esa fecha):
+  - `packages/obsidian-plugin/main.js` existe, **309.361 bytes, mtime
+    2026-09-22 18:01**, es decir 9 minutos antes del commit `4e56ee1`
+    (2026-09-22 18:10) — el build se hizo sobre el árbol que ese commit dejó.
+  - El build **sí incluye F2** (lo único que `4e56ee1` agrega): los marcadores
+    del parser EN de `task-nlp.ts` están en el bundle minificado
+    (`next\s+week`, `day\s+after\s+tomorrow`, y el placeholder
+    `¿Qué hay que hacer? (ej. Pagar SAT mañana !alta)`).
+  - **El deploy sí se hizo**: `diff` entre el `main.js` del repo y el instalado
+    en el vault activo
+    (`~/Library/Mobile Documents/iCloud~md~obsidian/Documents/.obsidian/plugins/octasuite-lite/main.js`)
+    no arroja diferencias → **byte-idénticos**; `manifest.json` también
+    idéntico. O sea que el vault instalado tiene esa versión.
+  - `npm test` → **583/583 en 45 archivos** y `npm run typecheck` → **0 errores**,
+    ambos verificados en la corrida del 2026-09-26 (con el fix de
+    `writeReportToVault` de esa misma fecha ya aplicado).
+  - **Aclaración importante:** el commit `4e56ee1` **no** incluye el build —
+    `main.js` está en `.gitignore` (línea `main.js`) y `git ls-files` lo
+    devuelve vacío; ningún commit de la historia toca ese archivo. El bundle es
+    un artefacto local/no versionado **por diseño**, no un olvido.
+  - **Advertencia (P0, corregido 2026-09-26 — ver "Defecto adyacente" más
+    abajo):** el `main.js` desplegado contuvo el botón de export de B-04 que
+    **nunca funcionó** por la duplicación de folder en el caller de
+    `writeReportToVault` (presente desde `93275ab`). El fix quedó en `src/` con
+    RED→GREEN y suite 586/586; el vault se actualiza con `npm run deploy`
+    + Cmd+R una vez aprobado el diff.
+  - **Lo que queda pendiente de verdad:** como el fix de `writeReportToVault`
+    (2026-09-26) tocó `src/`, el `main.js` instalado en el vault quedó
+    **atrás respecto al working tree**. Hace falta `npm run build` +
+    `npm run deploy` (más Cmd+R en Obsidian) para llevar el fix al vault. No se
+    ejecutó en esta corrida porque el orquestador lo tiene reservado y para no
+    pisar la evidencia de mtime/byte-identidad que se verificó arriba.
 - **Staging — Ubicaciones secundarias en devoluciones/stock:** decisión
   aprobada: `stockReturnLocationId` NO es PRIMARY → se valida/rechaza en
   emisión (ya mantenido en el reducer histórico); soporte real de
   localizaciones secundarias de retorno queda en BACKLOG, requiere TDD.
+
+### Bug latente corregido (2026-09-26) — `writeReportToVault`
+
+El "bonus (posible bug latente)" anotado en B-07 **estaba confirmado y se
+corrigió**. Detalle, porque es la clase de bug que el mock estaba enmascarando:
+
+- **Causa raíz:** `writeReportToVault` (`ui/report-export.ts`) llamaba
+  `await vault.createFolder(folder)` sin condición. Las tipificaciones oficiales
+  de Obsidian lo dicen explícito — `node_modules/obsidian/obsidian.d.ts:7400`:
+  `@throws Error if folder already exists`. O sea que el **segundo** export al
+  mismo folder fallaba en Obsidian real.
+- **Por qué los tests no lo veían:** el `createFolder` del mock en
+  `tests/reports-vault.test.ts` era idempotente (no lanzaba), que **no** es el
+  comportamiento real.
+- **Fix (TDD RED→GREEN):** el mock ahora modela carpetas (`MemoryAdapter` con un
+  `Set` de carpetas; un archivo implica sus carpetas padre) y `createFolder`
+  **lanza si la carpeta ya existe**, igual que Obsidian. Con eso, 3 tests
+  quedaron en RED — incluido "maneja carpeta ya existente sin fallar", que
+  justamente era el que lo enmascaraba — y el fix fue condicionar la creación:
+  `if (!vault.getAbstractFileByPath(folder)) await vault.createFolder(folder)`.
+  Se usó `getAbstractFileByPath` (no `adapter.exists`) para no ampliar la
+  superficie de `MinimalVault`: en Obsidian real devuelve un `TFolder` (que
+  extiende `TAbstractFile` y trae `path`), y el typecheck lo valida.
+- **Verde:** `reports-vault.test.ts` 5/5 (se añadió un test explícito de
+  doble export al mismo folder con contador de llamadas a `createFolder`), suite
+  completa 583/583, typecheck 0.
+- **Defecto adyacente DETECTADO y CORREGIDO (P0, 2026-09-26):**
+  `ui/reports-view.ts` llamaba
+  `writeReportToVault(this.app.vault, folder, path, content)` donde `path` ya
+  venía con la carpeta incluida (`path = \`${folder}/reporte-{month}.md\``).
+  Como la función arma `fullPath = \`${folder}/${filename}\``, el archivo real
+  quedaba en
+  `octasuite-data/reports/octasuite-data/reports/reporte-2026-09.md` (folder
+  duplicado), y `vault.create` no crea carpetas intermedias → el export fallaba
+  en Obsidian real aunque la carpeta existiera. **El síntoma real era PEOR que
+  un path engañoso: fallo silencioso total.** El `await` iba ANTES del
+  `new Notice`; si `vault.create` lanzaba, el Notice nunca se ejecutaba y no
+  había try/catch en el archivo → el usuario hacía clic en "MD"/"CSV", no pasaba
+  nada, y quedaba un unhandled rejection en consola. `git log -S` confirmó que
+  la duplicación existía desde el commit ORIGINAL de B-04 (`93275ab`): **el
+  export nunca funcionó ni una sola vez desde que se escribieron los botones**,
+  y los unit tests de `writeReportToVault` no podían cazarlo (le pasaban el
+  filename bien; el error estaba en la composición de argumentos del caller).
+  **Fix aplicado (TDD RED→GREEN):** helper puro exportado
+  `reportFileName(month, kind)` en `report-export.ts` (devuelve solo el nombre,
+  sin ruta; test `expect(name).not.toContain("/")` ata la regresión), el caller
+  usa `reportFileName` y pasa solo el filename a `writeReportToVault`, y el
+  export quedó envuelto en `try/catch` con `new Notice` de error (ya no hay
+  unhandled rejection ni silencio). Suite completa 586/586, typecheck 0.
 
 ---
 

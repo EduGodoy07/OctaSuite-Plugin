@@ -39,6 +39,18 @@ function csvCell(value: string): string {
   return /[",\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
 }
 
+/**
+ * Nombre de archivo del reporte para un período y formato (B-04).
+ * Devuelve SOLO el nombre, sin ruta: el caller compone `folder/filename` aparte.
+ * Si esto un día incluyera "/", el export escribiría en un folder anidado
+ * correcto — pero el P0 2026-09-26 mostró que la duplicación de folder en el
+ * caller es invisible para los unit tests de writeReportToVault, así que el
+ * nombre se centraliza acá y se testea que no contenga separadores.
+ */
+export function reportFileName(month: string, kind: "md" | "csv"): string {
+  return kind === "md" ? `reporte-${month}.md` : `tablas-${month}.csv`;
+}
+
 function mdTable(headers: readonly string[], rows: readonly (readonly string[])[]): string {
   const esc = (s: string) => s.replace(/\\/g, "\\\\").replace(/\|/g, "\\|");
   const head = `| ${headers.map(esc).join(" | ")} |`;
@@ -164,7 +176,9 @@ export interface MinimalVault {
  * Escribe un reporte (Markdown o CSV) al vault en la carpeta de reportes.
  * - Si el archivo ya existe: usa `modify`.
  * - Si no existe: usa `create`.
- * - Crea la carpeta si no existe (idempotente).
+ * - Crea la carpeta solo si no existe: en Obsidian real `vault.createFolder`
+ *   LANZA si la carpeta ya existe, así que crearla siempre rompe el segundo
+ *   export al mismo folder.
  * Función pura para testabilidad; la vista llama a esto.
  */
 export async function writeReportToVault(
@@ -174,7 +188,9 @@ export async function writeReportToVault(
   content: string,
 ): Promise<void> {
   const fullPath = `${folder}/${filename}`;
-  await vault.createFolder(folder);
+  if (!vault.getAbstractFileByPath(folder)) {
+    await vault.createFolder(folder);
+  }
   const existing = vault.getAbstractFileByPath(fullPath);
   if (existing && "path" in existing) {
     await vault.modify(existing, content);

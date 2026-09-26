@@ -21,7 +21,7 @@ import { companyLabel } from "./company-switcher.js";
 import type { PluginHost } from "./host.js";
 import { donut, groupedBars, monthHeatmap } from "./charts.js";
 import { moduleHeader } from "./nav.js";
-import { reportCsv, reportMarkdown, writeReportToVault, type ReportInput } from "./report-export.js";
+import { reportCsv, reportFileName, reportMarkdown, writeReportToVault, type ReportInput } from "./report-export.js";
 
 /**
  * Reportes del período. La estructura de bloques —resumen, categorías, formas de
@@ -324,10 +324,21 @@ export class ReportsView extends ItemView {
 
     const content = kind === "md" ? reportMarkdown(input) : reportCsv(input);
     const folder = `${settings.dataFolder}/reports`;
-    const path = `${folder}/${kind === "md" ? `reporte-${this.month}.md` : `tablas-${this.month}.csv`}`;
+    // P0 2026-09-26: el filename SOLO (sin folder). Antes se pasaba `path` con
+    // el folder ya incluido y `writeReportToVault` volvía a anteponerlo, dejando
+    // el archivo en `folder/folder/...` que `vault.create` nunca podía escribir
+    // (silencio total + unhandled rejection). El helper reportFileName no admite
+    // "/", así que esta regresión es estructuralmente imposible.
+    const filename = reportFileName(this.month, kind);
+    const path = `${folder}/${filename}`;
 
-    await writeReportToVault(this.app.vault, folder, path, content);
-    new Notice(`Reporte exportado a ${path}`, 5000);
+    try {
+      await writeReportToVault(this.app.vault, folder, filename, content);
+      new Notice(`Reporte exportado a ${path}`, 5000);
+    } catch (error) {
+      console.error("OctaSuite: falló el export del reporte", error);
+      new Notice(`No se pudo exportar el reporte: ${error instanceof Error ? error.message : String(error)}`, 8000);
+    }
   }
 
   override onClose(): Promise<void> {
