@@ -390,12 +390,18 @@ export function apply(state: State, event: AnyEvent): RejectedEvent | null {
       }
       if (!state.products.has(p.productId)) return reject("not_found", `Producto inexistente: ${p.productId}`);
       if (!p.reason || p.reason.trim() === "") return reject("no_reason", "El ajuste requiere motivo");
+      if (p.locationId && p.locationId !== PRIMARY_LOCATION_ID) {
+        const location = state.locations.get(p.locationId);
+        if (!location) return reject("not_found", `Ubicación inexistente: ${p.locationId}`);
+        if (location.archived) return reject("archived", `La ubicación ${location.name} está archivada`);
+      }
       state.adjustments.set(p.adjustmentId, {
         id: p.adjustmentId,
         date: p.date,
         productId: p.productId,
         quantity: p.quantity,
         reason: p.reason,
+        ...(p.locationId ? { locationId: p.locationId } : {}),
         createdAt: event.at,
       });
       return null;
@@ -528,6 +534,32 @@ export function apply(state: State, event: AnyEvent): RejectedEvent | null {
         throw e;
       }
 
+      // Validar y expandir el retorno de stock ANTES de mutar factura/nota.
+      // Un evento histórico sin destino explícito continúa significando principal.
+      const stockReturnLocationId = p.stockReturnLocationId ?? PRIMARY_LOCATION_ID;
+      const returnMovements: Map<string, number>[] = [];
+      if (p.lines && p.lines.length > 0) {
+        if (stockReturnLocationId !== PRIMARY_LOCATION_ID) {
+          const location = state.locations.get(stockReturnLocationId);
+          if (!location) return reject("not_found", `Ubicación de retorno inexistente: ${stockReturnLocationId}`);
+          if (location.archived) return reject("archived", `La ubicación de retorno ${location.name} está archivada`);
+        }
+        for (const line of p.lines) {
+          if (!Number.isFinite(line.quantity) || line.quantity <= 0) {
+            return reject("bad_quantity", `Cantidad inválida en devolución: ${line.quantity}`);
+          }
+          if (!state.products.has(line.productId)) {
+            return reject("not_found", `Producto devuelto inexistente: ${line.productId}`);
+          }
+          try {
+            returnMovements.push(explodeLine(state.products, { productId: line.productId, quantity: line.quantity }));
+          } catch (e) {
+            const message = e instanceof Error ? e.message : String(e);
+            return reject("stock.invalid_return", message);
+          }
+        }
+      }
+
       // Guardar credit note extendida (campos nuevos en objeto plano)
       const creditNote: CreditNote & {
         type?: CreditNoteType;
@@ -555,17 +587,22 @@ export function apply(state: State, event: AnyEvent): RejectedEvent | null {
         creditNoteIds: [...current.creditNoteIds, p.creditNoteId],
       });
 
-// 1) Stock return: si hay líneas devueltas, crear ajuste/traslado a ubicación
-      if (p.lines && p.lines.length > 0) {
-        const locationId = p.stockReturnLocationId ?? PRIMARY_LOCATION_ID;
-        for (const [i, line] of p.lines.entries()) {
-          const adjustmentId = `adj_${p.creditNoteId}_${i}`;
+// 1) Stock return: cada unidad devuelta va a la ubicación seleccionada.
+// Los combos se expanden a sus componentes almacenables; notas históricas sin
+// ubicación explícita continúan regresando a principal.
+      for (const [lineIndex, movements] of returnMovements.entries()) {
+        const entries = [...movements.entries()];
+        for (const [componentIndex, [productId, quantity]] of entries.entries()) {
+          const adjustmentId = entries.length === 1
+            ? `adj_${p.creditNoteId}_${lineIndex}`
+            : `adj_${p.creditNoteId}_${lineIndex}_${componentIndex}`;
           state.adjustments.set(adjustmentId, {
             id: adjustmentId,
             date: p.date,
-            productId: line.productId,
-            quantity: line.quantity,
+            productId,
+            quantity,
             reason: "Devolución de cliente",
+            locationId: stockReturnLocationId,
             createdAt: event.at,
           });
         }
@@ -2047,6 +2084,9 @@ export function locationStockLevels(state: State, locationId: string): LocationS
     if (t.fromLocationId !== locationId && t.toLocationId !== locationId) continue;
     for (const line of t.lines) ids.add(line.productId);
   }
+  for (const adjustment of state.adjustments.values()) {
+    if ((adjustment.locationId ?? PRIMARY_LOCATION_ID) === locationId) ids.add(adjustment.productId);
+  }
   if (locationId === PRIMARY_LOCATION_ID) {
     for (const [id, level] of stockLevels(state)) {
       const product = state.products.get(id);
@@ -2076,10 +2116,23 @@ export function locationStock(state: State, locationId: string, productId: strin
     return delta;
   };
   if (locationId === PRIMARY_LOCATION_ID) {
-    const base = stockLevels(state).get(productId)?.onHand ?? 0;
+    // Global stock includes adjustments scoped to secondary locations. Remove
+    // those movements before calculating the principal location.
+    let base = stockLevels(state).get(productId)?.onHand ?? 0;
+    for (const adjustment of state.adjustments.values()) {
+      if (adjustment.productId !== productId) continue;
+      if (adjustment.locationId && adjustment.locationId !== PRIMARY_LOCATION_ID) {
+        base -= adjustment.quantity;
+      }
+    }
     return base + transferDelta(PRIMARY_LOCATION_ID);
   }
-  return transferDelta(locationId);
+  let localAdjustments = 0;
+  for (const adjustment of state.adjustments.values()) {
+    if (adjustment.productId !== productId || adjustment.locationId !== locationId) continue;
+    localAdjustments += adjustment.quantity;
+  }
+  return transferDelta(locationId) + localAdjustments;
 }
 
 /** Empresas activas (no archivadas), ordenadas por nombre. */
