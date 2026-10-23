@@ -1,0 +1,73 @@
+name: Validate OctaSuite Plugin
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Tests, typecheck, production build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Run test suite
+        run: npm test
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build production plugin
+        run: npm run build
+
+      - name: Validate BRAT package files and versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          plugin="packages/obsidian-plugin"
+          test -s "$plugin/main.js"
+          test -s "$plugin/manifest.json"
+          test -s "$plugin/styles.css"
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const root = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          const plugin = JSON.parse(fs.readFileSync('packages/obsidian-plugin/package.json', 'utf8'));
+          const manifest = JSON.parse(fs.readFileSync('packages/obsidian-plugin/manifest.json', 'utf8'));
+          if (root.version !== '0.10.0') throw new Error(`Expected root version 0.10.0, got ${root.version}`);
+          if (plugin.version !== manifest.version) throw new Error(`Plugin package version ${plugin.version} differs from manifest ${manifest.version}`);
+          if (manifest.version !== '0.10.0') throw new Error(`Expected manifest version 0.10.0, got ${manifest.version}`);
+          console.log(`Validated OctaSuite Lite ${manifest.version}`);
+          NODE
+
+      - name: Stage plugin distribution
+        run: |
+          mkdir -p dist/octasuite-lite
+          cp packages/obsidian-plugin/main.js packages/obsidian-plugin/manifest.json packages/obsidian-plugin/styles.css dist/octasuite-lite/
+
+      - name: Upload installable plugin files
+        uses: actions/upload-artifact@v4
+        with:
+          name: octasuite-lite-0.10.0
+          path: dist/octasuite-lite/
+          if-no-files-found: error
+          retention-days: 14
