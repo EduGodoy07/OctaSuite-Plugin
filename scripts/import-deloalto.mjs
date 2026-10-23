@@ -17,7 +17,7 @@ import path from "node:path";
 import readline from "node:readline";
 import { CopyTableCollector } from "../packages/core/dist/import/copy.js";
 import { buildDeloaltoEvents } from "../packages/core/dist/import/deloalto.js";
-import { groupEventsByMonth } from "../packages/core/dist/import/journal-events.js";
+import { filterNewJournalEvents, groupEventsByMonth } from "../packages/core/dist/import/journal-events.js";
 
 // Columnas exactas que usa packages/core/src/import/deloalto.ts.
 const WANTED = new Map([
@@ -162,15 +162,8 @@ async function main() {
   // Deduplicar contra TODOS los archivos del journal de esta empresa, no solo
   // el mes destino: el dump puede contener eventos con fechas históricas variadas.
   const { ids: existing, malformedLines, filesScanned } = await readExistingEventIds(journalDir);
-  const seen = new Set(existing);
-  const fresh = [];
-  for (const event of result.events) {
-    if (seen.has(event.id)) continue;
-    fresh.push(event);
-    seen.add(event.id);
-  }
+  const { fresh, duplicateCount: duplicates } = filterNewJournalEvents(result.events, existing);
   const byMonth = groupEventsByMonth(fresh);
-  const duplicates = result.events.length - fresh.length;
 
   console.log(`\nJournal de destino: ${journalDir}`);
   console.log(`Archivos mensuales revisados: ${fmt(filesScanned)}; IDs ya existentes: ${fmt(existing.size)}`);
