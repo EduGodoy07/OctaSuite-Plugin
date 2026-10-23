@@ -2174,9 +2174,9 @@ export function rateFor(
 /** Busca la cuenta contable asociada a un método de pago (tender). */
 function findTenderAccount(state: State, method: string): Account | undefined {
   // Diacritics are normalized for matching, but never guess a ledger account.
-  const methodLower = method.normalize("NFD").replace(/[\\u0300-\\u036f]/g, "").toLowerCase().trim();
+  const methodLower = method.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
   for (const acc of state.accounts.values()) {
-    const nameLower = acc.name.normalize("NFD").replace(/[\\u0300-\\u036f]/g, "").toLowerCase();
+    const nameLower = acc.name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
     if (methodLower.includes("efectiv") && (nameLower.includes("caja") || nameLower.includes("efectiv"))) return acc;
     if (methodLower.includes("tarjet") && nameLower.includes("banco")) return acc;
     if (methodLower.includes("transfer") && nameLower.includes("banco")) return acc;
