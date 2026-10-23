@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { writeReportToVault } from "../src/ui/report-export.js";
+import { writeMonthlyReportToVault, writeReportToVault } from "../src/ui/report-export.js";
 
 /**
  * Adapter minimo en memoria para el vault (DataAdapter de Obsidian).
@@ -79,6 +79,20 @@ describe("writeReportToVault (B-04)", () => {
     adapter.set("octasuite-data/reports/reporte-2026-09.md", "contenido viejo");
     await writeReportToVault(vault, "octasuite-data/reports", "reporte-2026-09.md", "contenido nuevo");
     expect(adapter.get("octasuite-data/reports/reporte-2026-09.md")).toBe("contenido nuevo");
+  });
+
+
+  it("escribe reportes mensuales bajo la carpeta una sola vez", async () => {
+    const path = await writeMonthlyReportToVault(
+      vault,
+      "octasuite-data/reports",
+      "2026-09",
+      "md",
+      "# Reporte\ncontenido",
+    );
+    expect(path).toBe("octasuite-data/reports/reporte-2026-09.md");
+    expect(adapter.get(path)).toBe("# Reporte\ncontenido");
+    expect(adapter.get("octasuite-data/reports/octasuite-data/reports/reporte-2026-09.md")).toBeUndefined();
   });
 
   it("maneja carpeta ya existente sin volver a crearla", async () => {
