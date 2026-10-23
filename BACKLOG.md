@@ -214,12 +214,19 @@ antes de publicarse como nueva prerelease.
   en la nota, pero aún no se emite automáticamente una nueva factura ni se
   descuenta inventario para los nuevos productos. No presentar el intercambio
   como flujo completo hasta cerrar la emisión contable y de stock.
-- **Pendiente de control contable:** los tender no reconocidos ya no se asignan
-  a Caja por fallback; si no existe cuenta compatible, el flujo actual puede
-  guardar la nota sin asiento de tender. Mejorar el feedback/rechazo explícito.
+- **Control contable:** los tender no reconocidos ya no se asignan a Caja por
+  fallback. Si no hay cuenta compatible, la nota se conserva sin asiento por
+  compatibilidad con journals/configuraciones antiguas; PR #10 añade aviso en la
+  UI para no presentar ese caso como un reembolso completamente contabilizado.
+  Sigue pendiente decidir si instalaciones nuevas deben bloquear el reembolso
+  sin una cuenta de Caja/Bancos y Cuentas por Cobrar.
+- **Validación de líneas:** PR #9 valida producto, cantidad fraccionaria positiva,
+  precio, moneda e IVA, y deja explícito que exchange sigue siendo parcial.
 - **Archivos:** `packages/core/src/domain/invoice.ts`, `packages/core/src/store.ts`,
   `packages/obsidian-plugin/src/ui/credit-note-modal.ts`,
-  `packages/obsidian-plugin/src/ui/invoices-view.ts`.### B-08 · Rutas con geolocalización
+  `packages/obsidian-plugin/src/ui/invoices-view.ts`.
+
+### B-08 · Rutas con geolocalización
 - **Por qué:** pedido de Eduardo (2026-09-18). Para field service / entregas /
   visitas se necesita registrar rutas, paradas y coordenadas. Verificado: ni el
   ERP OctaSuite (Laravel) ni el plugin tienen geolocalización (0 hits de
