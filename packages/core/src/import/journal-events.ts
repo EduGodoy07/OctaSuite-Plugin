@@ -19,3 +19,21 @@ export function groupEventsByMonth(events: readonly AnyEvent[]): Map<string, Any
 
   return grouped;
 }
+
+/**
+ * Remove events already present in the journal and duplicate IDs repeated in
+ * the same import batch. The first occurrence wins, preserving source order.
+ */
+export function filterNewJournalEvents(
+  events: readonly AnyEvent[],
+  existingIds: ReadonlySet<string>,
+): { fresh: AnyEvent[]; duplicateCount: number } {
+  const seen = new Set(existingIds);
+  const fresh: AnyEvent[] = [];
+  for (const event of events) {
+    if (seen.has(event.id)) continue;
+    seen.add(event.id);
+    fresh.push(event);
+  }
+  return { fresh, duplicateCount: events.length - fresh.length };
+}
