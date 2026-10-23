@@ -246,7 +246,16 @@ export class InvoicesView extends ItemView {
           }),
           { companyId: invoiceCompanyId },
         );
-        if (ok) new Notice(`Nota de crédito (${type ?? "store_credit"}) emitida sobre ${invoice.displayNumber}`);
+        if (ok) {
+          if (type === "refund" && !this.host.state.journalEntries.has(`je_${creditNoteId}`)) {
+            new Notice(
+              `Nota de crédito registrada, pero sin asiento contable de reembolso. Verifica Caja/Bancos y Cuentas por Cobrar (cuenta 1200).`,
+              10000,
+            );
+          } else {
+            new Notice(`Nota de crédito (${type ?? "store_credit"}) emitida sobre ${invoice.displayNumber}`);
+          }
+        }
       },
     }).open();
   }
