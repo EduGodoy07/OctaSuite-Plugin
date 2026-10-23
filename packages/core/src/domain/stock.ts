@@ -65,6 +65,11 @@ export interface StockAdjustment {
   /** Firmada: negativa descuenta, positiva suma. */
   readonly quantity: number;
   readonly reason: AdjustmentReason;
+  /**
+   * Ubicación donde se aplica el ajuste. Ausente en eventos históricos =
+   * ubicación principal, por compatibilidad con el journal anterior.
+   */
+  readonly locationId?: string;
   readonly createdAt: IsoInstant;
 }
 
