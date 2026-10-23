@@ -182,9 +182,12 @@ FEL de SAT. El CUI del DPI usa otro algoritmo y **no** está implementado.
   `manifest.json` y `styles.css`. Ese tag precede a las correcciones de la
   auditoría posterior; probar y publicar una nueva beta antes de recomendarla
   para uso con datos importantes.
-- `packages/obsidian-plugin` v0.10.0: instalado y **corriendo** en el vault de
-  iCloud, bundle verificado contra la fuente (no solo el resultado de `tsc`,
-  ver el incidente al final de `ADR-001`). Contiene:
+- **Estado de ejecución reportado:** la beta `0.10.0-beta.1` fue probada
+  manualmente por el usuario. Ese resultado aplica al tag publicado, no garantiza
+  la interfaz de commits posteriores. La candidata con correcciones nuevas debe
+  volver a pasar un smoke test en vault desechable. Bundle y artefactos se validan
+  en CI, pero los tests automáticos no simulan toda la UI de Obsidian.
+- **Capacidades actuales documentadas en código:**
   - **Lanzador**: indicadores del período + mosaicos de módulo agrupados
     (`Listo` / `Próximamente`), cada pendiente con el motivo real. Registro
     único en `modules.ts`. Navega dentro de la misma hoja, con botón ← al
