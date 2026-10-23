@@ -174,11 +174,34 @@ export async function writeReportToVault(
   content: string,
 ): Promise<void> {
   const fullPath = `${folder}/${filename}`;
-  await vault.createFolder(folder);
+  // Vault.createFolder lanza si la carpeta ya existe en Obsidian real.
+  if (!vault.getAbstractFileByPath(folder)) await vault.createFolder(folder);
   const existing = vault.getAbstractFileByPath(fullPath);
   if (existing && "path" in existing) {
     await vault.modify(existing, content);
   } else {
     await vault.create(fullPath, content);
   }
+}
+
+/** Nombre de archivo estable para un reporte mensual. */
+export function reportExportFilename(kind: "md" | "csv", month: string): string {
+  return kind === "md" ? `reporte-${month}.md` : `tablas-${month}.csv`;
+}
+
+/**
+ * Exporta un reporte mensual y devuelve la ruta final escrita en el vault.
+ * Centraliza el armado de filename para no pasar por error la ruta completa
+ * como si fuera un nombre relativo (lo que duplicaría `folder`).
+ */
+export async function writeMonthlyReportToVault(
+  vault: MinimalVault,
+  folder: string,
+  month: string,
+  kind: "md" | "csv",
+  content: string,
+): Promise<string> {
+  const filename = reportExportFilename(kind, month);
+  await writeReportToVault(vault, folder, filename, content);
+  return `${folder}/${filename}`;
 }
