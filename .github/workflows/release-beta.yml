@@ -1,0 +1,110 @@
+name: Publish OctaSuite Lite beta
+
+on:
+  push:
+    tags:
+      - '0.10.0-beta.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Beta version to publish (for example 0.10.0-beta.1)"
+        required: true
+        default: "0.10.0-beta.1"
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-beta-${{ inputs.version || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  publish-beta:
+    name: Validate and publish BRAT beta
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_VERSION: ${{ inputs.version || github.ref_name }}
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Run test suite
+        run: npm test
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build production plugin
+        run: npm run build
+
+      - name: Prepare and validate release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$RELEASE_VERSION" =~ ^0\.10\.0-beta\.[0-9]+$ ]]; then
+            echo "Refusing to publish unexpected beta version: $RELEASE_VERSION" >&2
+            exit 1
+          fi
+
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const version = process.env.RELEASE_VERSION;
+          const root = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          const plugin = JSON.parse(fs.readFileSync('packages/obsidian-plugin/package.json', 'utf8'));
+          const sourceManifest = JSON.parse(fs.readFileSync('packages/obsidian-plugin/manifest.json', 'utf8'));
+          if (root.version !== '0.10.0') throw new Error(`Unexpected root version: ${root.version}`);
+          if (plugin.version !== '0.10.0') throw new Error(`Unexpected plugin package version: ${plugin.version}`);
+          if (sourceManifest.version !== '0.10.0') throw new Error(`Unexpected source manifest version: ${sourceManifest.version}`);
+
+          const out = 'dist/octasuite-lite';
+          fs.mkdirSync(out, { recursive: true });
+          fs.copyFileSync('packages/obsidian-plugin/main.js', `${out}/main.js`);
+          fs.copyFileSync('packages/obsidian-plugin/styles.css', `${out}/styles.css`);
+          sourceManifest.version = version;
+          fs.writeFileSync(`${out}/manifest.json`, JSON.stringify(sourceManifest, null, 2) + '\n');
+
+          for (const file of ['main.js', 'manifest.json', 'styles.css']) {
+            if (!fs.statSync(`${out}/${file}`).size) throw new Error(`Release asset is empty: ${file}`);
+          }
+          const releasedManifest = JSON.parse(fs.readFileSync(`${out}/manifest.json`, 'utf8'));
+          if (releasedManifest.version !== version) throw new Error('Release tag and manifest version do not match');
+          console.log(`Prepared release assets for ${releasedManifest.id} ${releasedManifest.version}`);
+          NODE
+
+      - name: Upload installable artifact for inspection
+        uses: actions/upload-artifact@v4
+        with:
+          name: octasuite-lite-${{ env.RELEASE_VERSION }}
+          path: dist/octasuite-lite/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Create GitHub prerelease with BRAT assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_VERSION }}
+          target_commitish: ${{ github.sha }}
+          name: ${{ env.RELEASE_VERSION }}
+          prerelease: true
+          make_latest: false
+          fail_on_unmatched_files: true
+          body: |
+            OctaSuite Lite beta for testing through BRAT.
+
+            **Validation performed by this workflow:** locked dependency installation, automated tests, TypeScript checks, production build, and release-asset/version validation.
+
+            **Testing note:** install into a disposable Obsidian vault first. Do not test this beta against a vault containing important data.
+          files: |
+            dist/octasuite-lite/main.js
+            dist/octasuite-lite/manifest.json
+            dist/octasuite-lite/styles.css
