@@ -15,12 +15,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
-import { fileURLToPath } from "node:url";
-
 import { CopyTableCollector } from "../packages/core/dist/import/copy.js";
 import { buildDeloaltoEvents } from "../packages/core/dist/import/deloalto.js";
-
-const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+import { filterNewJournalEvents, groupEventsByMonth } from "../packages/core/dist/import/journal-events.js";
 
 // Columnas exactas que usa packages/core/src/import/deloalto.ts.
 const WANTED = new Map([
@@ -37,15 +34,61 @@ const WANTED = new Map([
 ]);
 
 function parseArgs(argv) {
-  const dump = argv.find((a) => !a.startsWith("--"));
-  const dryRun = argv.includes("--dry-run");
-  const vaultIdx = argv.indexOf("--vault");
-  const vault = vaultIdx >= 0 ? argv[vaultIdx + 1] : undefined;
+  let dump;
+  let vault;
+  let dryRun = false;
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === "--dry-run") {
+      dryRun = true;
+    } else if (arg === "--vault") {
+      const next = argv[++i];
+      if (!next || next.startsWith("--")) {
+        throw new Error("--vault requiere una ruta");
+      }
+      vault = next;
+    } else if (arg.startsWith("--")) {
+      throw new Error(`Opción desconocida: ${arg}`);
+    } else if (dump === undefined) {
+      dump = arg;
+    } else {
+      throw new Error(`Argumento inesperado: ${arg}`);
+    }
+  }
   if (!dump) {
-    console.error("Uso: node scripts/import-deloalto.mjs <dump.sql> [--dry-run] [--vault <ruta>]");
-    process.exit(1);
+    throw new Error("Uso: node scripts/import-deloalto.mjs <dump.sql> [--dry-run] [--vault <ruta>]");
   }
   return { dump, dryRun, vault };
+}
+
+async function readExistingEventIds(journalDir) {
+  const ids = new Set();
+  let malformedLines = 0;
+  let filesScanned = 0;
+  if (!fs.existsSync(journalDir)) return { ids, malformedLines, filesScanned };
+
+  const files = fs.readdirSync(journalDir, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".jsonl"))
+    .map((entry) => entry.name)
+    .sort();
+
+  for (const filename of files) {
+    filesScanned++;
+    const stream = fs.createReadStream(path.join(journalDir, filename), "utf8");
+    const reader = readline.createInterface({ input: stream, crlfDelay: Infinity });
+    for await (const raw of reader) {
+      if (!raw.trim()) continue;
+      try {
+        const parsed = JSON.parse(raw);
+        if (typeof parsed.id === "string" && parsed.id.length > 0) ids.add(parsed.id);
+        else malformedLines++;
+      } catch {
+        // Preserve corrupt historical lines, but do not treat them as event IDs.
+        malformedLines++;
+      }
+    }
+  }
+  return { ids, malformedLines, filesScanned };
 }
 
 function fmt(n) {
@@ -108,39 +151,44 @@ async function main() {
     console.log(`    ${r.type} ${r.code}: ${r.reason}`);
   }
 
-  const vaultDir = vault ?? path.join(process.env.HOME, "Library/Mobile Documents/iCloud~md~obsidian/Documents");
+  const vaultDir = vault ?? path.join(process.env.HOME ?? "", "Library/Mobile Documents/iCloud~md~obsidian/Documents");
   const journalDir = path.join(vaultDir, "octasuite-data/journal/deloaltocompany");
-  const journalPath = path.join(journalDir, "2026-09.jsonl");
 
-  if (dryRun) {
-    console.log(`\n[dry-run] No se escribió nada. Journal destino: ${journalPath}`);
-    console.log(`[dry-run] ${fmt(result.events.length)} eventos listos para append.`);
-    process.exit(0);
-  }
-
-  if (!fs.existsSync(journalDir)) {
+  if (!dryRun && !fs.existsSync(journalDir)) {
     console.error(`No existe el directorio del journal: ${journalDir}`);
     process.exit(1);
   }
 
-  // Dedupe por id contra lo ya existente (append-only, ids únicos).
-  const existing = new Set();
-  if (fs.existsSync(journalPath)) {
-    for (const raw of fs.readFileSync(journalPath, "utf8").split("\n")) {
-      if (!raw.trim()) continue;
-      try {
-        existing.add(JSON.parse(raw).id);
-      } catch {
-        /* línea corrupta pre-existente: se respeta, no se toca */
-      }
-    }
-  }
-  const fresh = result.events.filter((e) => !existing.has(e.id));
-  console.log(`\nAppend a ${journalPath}: ${fmt(fresh.length)} nuevos (${fmt(existing.size)} ya existentes deduplicados)`);
+  // Deduplicar contra TODOS los archivos del journal de esta empresa, no solo
+  // el mes destino: el dump puede contener eventos con fechas históricas variadas.
+  const { ids: existing, malformedLines, filesScanned } = await readExistingEventIds(journalDir);
+  const { fresh, duplicateCount: duplicates } = filterNewJournalEvents(result.events, existing);
+  const byMonth = groupEventsByMonth(fresh);
 
-  const lines = fresh.map((e) => `${JSON.stringify(e)}\n`).join("");
-  fs.appendFileSync(journalPath, lines, "utf8");
-  console.log(`OK — journal actualizado.`);
+  console.log(`\nJournal de destino: ${journalDir}`);
+  console.log(`Archivos mensuales revisados: ${fmt(filesScanned)}; IDs ya existentes: ${fmt(existing.size)}`);
+  if (malformedLines > 0) {
+    console.warn(`Aviso: ${fmt(malformedLines)} líneas históricas no JSON o sin ID fueron preservadas y no usadas para deduplicar.`);
+  }
+
+  if (dryRun) {
+    console.log(`\n[dry-run] No se escribió nada.`);
+    console.log(`[dry-run] ${fmt(result.events.length)} eventos candidatos; ${fmt(duplicates)} ya existentes; ${fmt(fresh.length)} nuevos.`);
+    for (const [month, events] of [...byMonth.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+      console.log(`[dry-run] ${month}.jsonl: ${fmt(events.length)} eventos nuevos`);
+    }
+    if (byMonth.size === 0) console.log("[dry-run] No hay eventos nuevos para importar.");
+    return;
+  }
+
+  for (const [month, events] of [...byMonth.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+    const journalPath = path.join(journalDir, `${month}.jsonl`);
+    const lines = events.map((event) => `${JSON.stringify(event)}\n`).join("");
+    fs.appendFileSync(journalPath, lines, "utf8");
+    console.log(`Append a ${journalPath}: ${fmt(events.length)} eventos nuevos`);
+  }
+
+  console.log(`OK — import completado. ${fmt(fresh.length)} eventos añadidos; ${fmt(duplicates)} ya existían.`);
 }
 
 main().catch((err) => {
