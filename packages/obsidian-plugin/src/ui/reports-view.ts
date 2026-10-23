@@ -21,7 +21,7 @@ import { companyLabel } from "./company-switcher.js";
 import type { PluginHost } from "./host.js";
 import { donut, groupedBars, monthHeatmap } from "./charts.js";
 import { moduleHeader } from "./nav.js";
-import { reportCsv, reportMarkdown, writeReportToVault, type ReportInput } from "./report-export.js";
+import { reportCsv, reportMarkdown, writeMonthlyReportToVault, type ReportInput } from "./report-export.js";
 
 /**
  * Reportes del período. La estructura de bloques —resumen, categorías, formas de
@@ -324,9 +324,7 @@ export class ReportsView extends ItemView {
 
     const content = kind === "md" ? reportMarkdown(input) : reportCsv(input);
     const folder = `${settings.dataFolder}/reports`;
-    const path = `${folder}/${kind === "md" ? `reporte-${this.month}.md` : `tablas-${this.month}.csv`}`;
-
-    await writeReportToVault(this.app.vault, folder, path, content);
+    const path = await writeMonthlyReportToVault(this.app.vault, folder, this.month, kind, content);
     new Notice(`Reporte exportado a ${path}`, 5000);
   }
 
