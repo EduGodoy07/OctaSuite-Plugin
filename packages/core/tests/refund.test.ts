@@ -176,6 +176,19 @@ describe("CreditNote domain (B-05)", () => {
       expect(validateCreditNoteDraft(draft).map((e) => e.code)).toContain("credit_note.exchange_tax_rate_invalid");
     });
 
+    it("rechaza líneas JSON malformadas sin lanzar una excepción", () => {
+      const draft = {
+        type: "exchange",
+        amount: money(5000, CURRENCY),
+        reason: "Datos corruptos",
+        lines: [null],
+        exchangeLines: [{ productId: "p", quantity: 1, unitPrice: undefined, taxRate: 12 }],
+      } as unknown as CreditNoteDraft;
+      const codes = validateCreditNoteDraft(draft).map((e) => e.code);
+      expect(codes).toContain("credit_note.return_product_required");
+      expect(codes).toContain("credit_note.exchange_price_invalid");
+    });
+
     it("inválido: tenderRefund amount no coincide con amount total", () => {
       const draft: CreditNoteDraft = {
         type: "refund",
