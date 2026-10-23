@@ -2093,7 +2093,7 @@ export function locationStockLevels(state: State, locationId: string): LocationS
     for (const [id, level] of stockLevels(state)) {
       const product = state.products.get(id);
       if (product && isKit(product)) continue;
-      if (level.onHand !== 0) ids.add(id);
+      if (locationStock(state, locationId, id) !== 0) ids.add(id);
     }
   }
   const levels: LocationStockLevel[] = [];
