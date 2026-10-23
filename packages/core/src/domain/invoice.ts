@@ -230,37 +230,47 @@ export function validateCreditNoteDraft(draft: CreditNoteDraft): DomainError[] {
     kind: "return" | "exchange",
   ): void => {
     if (!lines) return;
-    for (const line of lines) {
+    for (const candidate of lines as readonly unknown[]) {
       const label = kind === "return" ? "la devolución" : "el cambio";
-      if (!line.productId || !line.productId.trim()) {
-        errors.push(new DomainError(
-          `Cada línea de ${label} requiere un producto`,
-          kind === "return" ? "credit_note.return_product_required" : "credit_note.exchange_product_required",
-        ));
+      const productCode = kind === "return" ? "credit_note.return_product_required" : "credit_note.exchange_product_required";
+      const quantityCode = kind === "return" ? "credit_note.return_quantity_invalid" : "credit_note.exchange_quantity_invalid";
+      const priceCode = kind === "return" ? "credit_note.return_price_invalid" : "credit_note.exchange_price_invalid";
+      const taxCode = kind === "return" ? "credit_note.return_tax_rate_invalid" : "credit_note.exchange_tax_rate_invalid";
+      const currencyCode = kind === "return" ? "credit_note.return_currency_mismatch" : "credit_note.exchange_currency_mismatch";
+
+      if (!candidate || typeof candidate !== "object") {
+        errors.push(new DomainError(`La línea de ${label} está mal formada`, productCode));
+        errors.push(new DomainError(`La cantidad de ${label} debe ser mayor que cero`, quantityCode));
+        errors.push(new DomainError(`El precio de ${label} no es válido`, priceCode));
+        errors.push(new DomainError(`La tasa de IVA de ${label} no es válida`, taxCode));
+        continue;
       }
-      if (!Number.isFinite(line.quantity) || line.quantity <= 0) {
-        errors.push(new DomainError(
-          `La cantidad de ${label} debe ser mayor que cero`,
-          kind === "return" ? "credit_note.return_quantity_invalid" : "credit_note.exchange_quantity_invalid",
-        ));
+
+      const line = candidate as {
+        productId?: unknown;
+        quantity?: unknown;
+        unitPrice?: unknown;
+        taxRate?: unknown;
+      };
+      if (typeof line.productId !== "string" || !line.productId.trim()) {
+        errors.push(new DomainError(`Cada línea de ${label} requiere un producto`, productCode));
       }
-      if (!Number.isSafeInteger(line.unitPrice.minor) || line.unitPrice.minor < 0) {
-        errors.push(new DomainError(
-          `El precio de ${label} no puede ser negativo ni inválido`,
-          kind === "return" ? "credit_note.return_price_invalid" : "credit_note.exchange_price_invalid",
-        ));
+      if (typeof line.quantity !== "number" || !Number.isFinite(line.quantity) || line.quantity <= 0) {
+        errors.push(new DomainError(`La cantidad de ${label} debe ser mayor que cero`, quantityCode));
       }
-      if (!Number.isFinite(line.taxRate) || line.taxRate < 0 || line.taxRate > 100) {
-        errors.push(new DomainError(
-          `La tasa de IVA de ${label} debe estar entre 0 y 100`,
-          kind === "return" ? "credit_note.return_tax_rate_invalid" : "credit_note.exchange_tax_rate_invalid",
-        ));
+
+      const price = line.unitPrice as Partial<Money> | null | undefined;
+      const validPrice = !!price && typeof price.minor === "number" &&
+        Number.isSafeInteger(price.minor) && price.minor >= 0 &&
+        typeof price.currency === "string" && price.currency.length > 0;
+      if (!validPrice) {
+        errors.push(new DomainError(`El precio de ${label} no es válido`, priceCode));
+      } else if (price.currency !== draft.amount.currency) {
+        errors.push(new DomainError(`La moneda de la línea de ${label} debe coincidir con la nota`, currencyCode));
       }
-      if (line.unitPrice.currency !== draft.amount.currency) {
-        errors.push(new DomainError(
-          `La moneda de la línea de ${label} debe coincidir con la nota`,
-          kind === "return" ? "credit_note.return_currency_mismatch" : "credit_note.exchange_currency_mismatch",
-        ));
+
+      if (typeof line.taxRate !== "number" || !Number.isFinite(line.taxRate) || line.taxRate < 0 || line.taxRate > 100) {
+        errors.push(new DomainError(`La tasa de IVA de ${label} debe estar entre 0 y 100`, taxCode));
       }
     }
   };
