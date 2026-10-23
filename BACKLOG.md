@@ -64,7 +64,8 @@ antes de publicarse como nueva prerelease.
   (10 tests en verde), suite completa 323/323, typecheck 0, deploy instalado.
 - **Alcance:** saldo de crédito por partner (multi-moneda); abono manual;
   tender "crédito" en caja con validación de saldo; consumos referenciados a
-  factura. Queda fuera (posible B-05): devolución con destino a crédito.
+  factura. El saldo a favor generado por nota de crédito se registra en B-05,
+  no es el mismo flujo que cobrar con saldo ya existente en Caja.
 - **Archivos:** `packages/core/src/domain/credit.ts`, `domain/loyalty.ts`
   (referencia), `events.ts`, `store.ts`, `index.ts`,
   `ui/register-view.ts`, `ui/partners-view.ts`.
@@ -191,7 +192,9 @@ antes de publicarse como nueva prerelease.
   `packages/obsidian-plugin/src/ui/pricelist-manager-modal.ts`,
   `partner-modal.ts`, `invoice-editor-modal.ts`.
 - **Criterio de seguridad:** ninguna lista de venta debe modificar costo o
-  valoración de inventario.### B-04 · Reportes profesionales exportables (PDF/CSV)
+  valoración de inventario.
+
+### B-04 · Reportes profesionales exportables (PDF/CSV)
 - **Estado:** Markdown y CSV se exportan offline a `{dataFolder}/reports/`.
   PR #3 corrigió la creación de carpetas ya existentes y el armado de rutas;
   el test ahora simula el contrato real de Obsidian.
@@ -199,7 +202,9 @@ antes de publicarse como nueva prerelease.
   para no añadir dependencias pesadas sin una decisión explícita.
 - **Archivos:** `packages/obsidian-plugin/src/ui/report-export.ts`,
   `packages/obsidian-plugin/src/ui/reports-view.ts`,
-  `packages/obsidian-plugin/tests/reports-vault.test.ts`.### B-05 · Refund/devolución flexible
+  `packages/obsidian-plugin/tests/reports-vault.test.ts`.
+
+### B-05 · Refund/devolución flexible
 - **Estado:** parcial, no paridad completa.
 - **Implementado:** notas `store_credit`, reembolso a los métodos disponibles
   (Efectivo, Tarjeta, Transferencia), devoluciones parciales y ajustes de stock
