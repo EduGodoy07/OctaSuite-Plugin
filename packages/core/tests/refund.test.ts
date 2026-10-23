@@ -238,6 +238,27 @@ describe("CreditNote domain (B-05)", () => {
       expect(arBalance.minor).toBe(amount.minor);
     });
 
+    it("no mapea el método Crédito a una cuenta activa arbitraria", () => {
+      const amount = money(5000, CURRENCY);
+      const { state, rejected } = project([
+        evt("accounting.account_created", { accountId: "a-cash", code: "1100", name: "Caja", type: "activo" }),
+        evt("accounting.account_created", { accountId: "a-ar", code: "1200", name: "Cuentas por Cobrar", type: "activo" }),
+        issuedInvoice("inv-legacy-credit", 10000),
+        evt("invoice.refunded", {
+          creditNoteId: "ncr-legacy-credit",
+          invoiceId: "inv-legacy-credit",
+          date: "2026-09-05",
+          amount,
+          reason: "Crédito a favor",
+          type: "refund",
+          tenderRefund: { method: "Crédito", amount },
+        }),
+      ]);
+      expect(rejected).toHaveLength(0);
+      // Crédito de cliente no es una salida de caja; debe usar store_credit, no fallback a Caja.
+      expect(accountBalance(state, "a-cash", CURRENCY).minor).toBe(0);
+    });
+
     it("reembolso sin cuentas configuradas: no rechaza el evento (fallback seguro)", () => {
       const amount = money(10000, CURRENCY);
       const { state, rejected } = project([
