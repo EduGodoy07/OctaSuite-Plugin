@@ -548,9 +548,11 @@ export function apply(state: State, event: AnyEvent): RejectedEvent | null {
           if (!Number.isFinite(line.quantity) || line.quantity <= 0) {
             return reject("bad_quantity", `Cantidad inválida en devolución: ${line.quantity}`);
           }
-          if (!state.products.has(line.productId)) {
-            return reject("not_found", `Producto devuelto inexistente: ${line.productId}`);
+          if (!line.productId || !line.productId.trim()) {
+            return reject("empty_product", "Una línea devuelta requiere un producto");
           }
+          // Un producto ya borrado del catálogo se conserva como almacenable:
+          // así el replay no pierde movimientos históricos (explodeLine lo soporta).
           try {
             returnMovements.push(explodeLine(state.products, { productId: line.productId, quantity: line.quantity }));
           } catch (e) {
