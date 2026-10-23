@@ -30,14 +30,17 @@ class MemoryAdapter {
 
 /** Mock del vault de Obsidian (solo lo que usa writeReportToVault). */
 function createMockVault(adapter: MemoryAdapter) {
+  const folders = new Set<string>();
   return {
     createFolder: async (path: string) => {
-      // En Obsidian, createFolder lanza si ya existe; aquí simulamos idempotente.
-      return;
+      // Obsidian Vault.createFolder rechaza carpetas que ya existen.
+      if (folders.has(path)) throw new Error(`Folder already exists: ${path}`);
+      folders.add(path);
     },
     getAbstractFileByPath: (path: string) => {
+      if (folders.has(path)) return { path, children: [] } as any;
       const content = adapter.get(path);
-      if (!content) return null;
+      if (content === undefined) return null;
       return {
         path,
         instanceof: () => true,
@@ -78,9 +81,9 @@ describe("writeReportToVault (B-04)", () => {
     expect(adapter.get("octasuite-data/reports/reporte-2026-09.md")).toBe("contenido nuevo");
   });
 
-  it("maneja carpeta ya existente sin fallar", async () => {
-    // Pre-crear la carpeta (simular que ya existe)
-    adapter.set("octasuite-data/reports/.keep", "");
+  it("maneja carpeta ya existente sin volver a crearla", async () => {
+    // El mock usa el mismo contrato que Obsidian: createFolder lanza si ya existe.
+    await vault.createFolder("octasuite-data/reports");
     await writeReportToVault(vault, "octasuite-data/reports", "reporte-2026-09.md", "ok");
     expect(adapter.get("octasuite-data/reports/reporte-2026-09.md")).toBe("ok");
   });
