@@ -134,6 +134,61 @@ describe("CreditNote domain (B-05)", () => {
       expect(problems.some((p) => p.code === "credit_note.exchange_requires_lines")).toBe(true);
     });
 
+    it("acepta cantidades fraccionarias en líneas de devolución para productos pesables", () => {
+      const draft: CreditNoteDraft = {
+        type: "exchange",
+        amount: money(5000, CURRENCY),
+        reason: "Devolución parcial de peso",
+        lines: [{ productId: "kg-rice", quantity: 0.5, unitPrice: money(10000, CURRENCY), taxRate: 12 }],
+      };
+      expect(validateCreditNoteDraft(draft)).toHaveLength(0);
+    });
+
+    it("rechaza cantidades no positivas en líneas devueltas", () => {
+      const draft: CreditNoteDraft = {
+        type: "exchange",
+        amount: money(5000, CURRENCY),
+        reason: "Cantidad cero",
+        lines: [{ productId: "kg-rice", quantity: 0, unitPrice: money(10000, CURRENCY), taxRate: 12 }],
+      };
+      expect(validateCreditNoteDraft(draft).map((e) => e.code)).toContain("credit_note.return_quantity_invalid");
+    });
+
+    it("rechaza líneas de cambio sin producto o con cantidad inválida", () => {
+      const draft: CreditNoteDraft = {
+        type: "exchange",
+        amount: money(5000, CURRENCY),
+        reason: "Línea incompleta",
+        exchangeLines: [{ productId: " ", quantity: -1, unitPrice: money(10000, CURRENCY), taxRate: 12 }],
+      };
+      const codes = validateCreditNoteDraft(draft).map((e) => e.code);
+      expect(codes).toContain("credit_note.exchange_product_required");
+      expect(codes).toContain("credit_note.exchange_quantity_invalid");
+    });
+
+    it("rechaza tasas fiscales inválidas en líneas nuevas", () => {
+      const draft: CreditNoteDraft = {
+        type: "exchange",
+        amount: money(5000, CURRENCY),
+        reason: "Tasa inválida",
+        exchangeLines: [{ productId: "new-product", quantity: 1, unitPrice: money(10000, CURRENCY), taxRate: 120 }],
+      };
+      expect(validateCreditNoteDraft(draft).map((e) => e.code)).toContain("credit_note.exchange_tax_rate_invalid");
+    });
+
+    it("rechaza líneas JSON malformadas sin lanzar una excepción", () => {
+      const draft = {
+        type: "exchange",
+        amount: money(5000, CURRENCY),
+        reason: "Datos corruptos",
+        lines: [null],
+        exchangeLines: [{ productId: "p", quantity: 1, unitPrice: undefined, taxRate: 12 }],
+      } as unknown as CreditNoteDraft;
+      const codes = validateCreditNoteDraft(draft).map((e) => e.code);
+      expect(codes).toContain("credit_note.return_product_required");
+      expect(codes).toContain("credit_note.exchange_price_invalid");
+    });
+
     it("inválido: tenderRefund amount no coincide con amount total", () => {
       const draft: CreditNoteDraft = {
         type: "refund",

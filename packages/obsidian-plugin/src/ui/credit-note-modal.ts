@@ -18,7 +18,7 @@ type TenderMethod = (typeof TENDER_METHODS)[number];
 const CREDIT_NOTE_TYPES: readonly { value: CreditNoteType; label: string }[] = [
   { value: "store_credit", label: "Crédito cliente (saldo a favor)" },
   { value: "refund", label: "Reembolso al método de pago original" },
-  { value: "exchange", label: "Cambio (devolución + entrega nueva)" },
+  { value: "exchange", label: "Cambio (parcial; factura nueva manual)" },
 ];
 
 type ReturnLine = { productId: string; quantity: number; unitPrice: Money; taxRate: number };
@@ -142,6 +142,10 @@ export class CreditNoteModal extends Modal {
     }
 
     if (this.type === "exchange") {
+      this.exchangeSectionEl.createEl("p", {
+        cls: "octa-footnote",
+        text: "Flujo parcial: esta nota registra las líneas devueltas y los productos de cambio, pero no emite una factura de reemplazo ni descuenta el inventario de los productos nuevos. Registra la venta de reemplazo por separado.",
+      });
       this.exchangeSectionEl.createEl("h4", { text: "Líneas devueltas", cls: "octa-group" });
       const returnTable = this.exchangeSectionEl.createEl("table", { cls: "octa-table" });
       const returnHead = returnTable.createEl("thead").createEl("tr");
@@ -198,11 +202,13 @@ export class CreditNoteModal extends Modal {
       }
       this.renderConditionalSections();
     };
-    row.createEl("td").createEl("input", {
+    const quantityInput = row.createEl("td").createEl("input", {
       cls: "octa-cell-input octa-cell-narrow",
-      attr: { type: "number", min: "1", step: "1" },
+      attr: { type: "number", min: "0.000001", step: "any" },
       value: String(line.quantity),
-    }).oninput = (e) => { line.quantity = Number((e.target as HTMLInputElement).value) || 1; };
+    });
+    quantityInput.inputMode = "decimal";
+    quantityInput.oninput = (e) => { line.quantity = Number((e.target as HTMLInputElement).value); };
     row.createEl("td").createEl("input", {
       cls: "octa-cell-input octa-cell-narrow",
       attr: { type: "number", min: "0", step: "0.01" },
@@ -238,11 +244,13 @@ export class CreditNoteModal extends Modal {
       }
       this.renderConditionalSections();
     };
-    row.createEl("td").createEl("input", {
+    const quantityInput = row.createEl("td").createEl("input", {
       cls: "octa-cell-input octa-cell-narrow",
-      attr: { type: "number", min: "1", step: "1" },
+      attr: { type: "number", min: "0.000001", step: "any" },
       value: String(line.quantity),
-    }).oninput = (e) => { line.quantity = Number((e.target as HTMLInputElement).value) || 1; };
+    });
+    quantityInput.inputMode = "decimal";
+    quantityInput.oninput = (e) => { line.quantity = Number((e.target as HTMLInputElement).value); };
     row.createEl("td").createEl("input", {
       cls: "octa-cell-input octa-cell-narrow",
       attr: { type: "number", min: "0", step: "0.01" },
