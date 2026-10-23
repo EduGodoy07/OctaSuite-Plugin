@@ -206,7 +206,7 @@ export class InventoryView extends ItemView {
   private archiveLocation(location: InventoryLocation): void {
     new ConfirmModal(this.app, {
       title: "Archivar ubicación",
-      body: `${location.name} deja de aparecer en la lista y en el selector de traslados. Los traslados ya hechos no cambian.`,
+      body: `${location.name} dejará de aparecer en las ubicaciones activas. Primero traslada o ajusta cualquier existencia; no se puede archivar una ubicación con stock pendiente.`,
       confirmText: "Archivar",
       destructive: true,
       onConfirm: async () => {
@@ -526,7 +526,7 @@ export class TransferModal extends Modal {
       const qtyCell = row.createEl("td");
       const qty = qtyCell.createEl("input", { cls: "octa-cell-narrow" });
       qty.type = "text";
-      qty.inputMode = "numeric";
+      qty.inputMode = "decimal";
       qty.value = line.quantityRaw;
       qty.oninput = () => {
         line.quantityRaw = qty.value;

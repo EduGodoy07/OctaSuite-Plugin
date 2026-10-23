@@ -80,7 +80,7 @@ export function validateTransferDraft(draft: Partial<TransferDraft>): DomainErro
       if (!line.productId?.trim()) {
         errors.push(new DomainError("Una línea del traslado tiene un producto vacío", "inventory.empty_product"));
       }
-      if (!Number.isInteger(line.quantity) || line.quantity <= 0) {
+      if (!Number.isFinite(line.quantity) || line.quantity <= 0) {
         errors.push(
           new DomainError(`Cantidad inválida para ${line.productId || "producto"}: ${line.quantity}`, "inventory.bad_quantity"),
         );

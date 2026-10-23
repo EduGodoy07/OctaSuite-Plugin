@@ -83,6 +83,17 @@ describe("Ubicaciones de inventario", () => {
     expect(rejected.map((r) => r.code)).toEqual(["already_archived"]);
   });
 
+  it("rechaza archivar una ubicación con existencias y la deja activa", () => {
+    const { state, rejected } = project([
+      ...base(),
+      traslado("t-stock", "main", "bodega", [{ productId: "p1", quantity: 3 }]),
+      evt("inventory.location_archived", { locationId: "bodega" }),
+    ]);
+    expect(rejected.map((r) => r.code)).toContain("inventory.location_has_stock");
+    expect(locationById(state, "bodega")?.archived).toBe(false);
+    expect(locationStock(state, "bodega", "p1")).toBe(3);
+  });
+
   it("no archiva la ubicación principal (immutable_primary)", () => {
     const { state, rejected } = project([
       ubicacion("main", "Principal", "main"),
@@ -152,6 +163,16 @@ describe("Traslados entre ubicaciones", () => {
     expect(locationStockLevels(state, "bodega")).toEqual([{ productId: "p1", onHand: 3 }]);
     expect(locationStockLevels(state, "main")).toContainEqual({ productId: "p1", onHand: 7 });
     expect(transfersOf(state, "bodega").map((t) => t.id)).toEqual(["t1"]);
+  });
+
+  it("permite trasladar cantidades fraccionarias para productos pesables", () => {
+    const { state, rejected } = project([
+      ...base(),
+      traslado("t-half", "main", "bodega", [{ productId: "p1", quantity: 0.5 }]),
+    ]);
+    expect(rejected).toHaveLength(0);
+    expect(locationStock(state, "main", "p1")).toBe(9.5);
+    expect(locationStock(state, "bodega", "p1")).toBe(0.5);
   });
 
   it("no mueve lo que no hay (insufficient_stock)", () => {
