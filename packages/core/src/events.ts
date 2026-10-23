@@ -58,7 +58,7 @@ export type StockReceiptPaid = Envelope<
 >;
 export type StockAdjusted = Envelope<
   "stock.adjusted",
-  { adjustmentId: string; date: IsoDate; productId: string; quantity: number; reason: AdjustmentReason }
+  { adjustmentId: string; date: IsoDate; productId: string; quantity: number; reason: AdjustmentReason; locationId?: string }
 >;
 
 export type RegisterOpened = Envelope<
