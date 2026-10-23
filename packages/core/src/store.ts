@@ -1113,6 +1113,13 @@ export function apply(state: State, event: AnyEvent): RejectedEvent | null {
         return reject("inventory.immutable_primary", "La ubicación principal no se puede archivar");
       }
       if (current.archived) return reject("already_archived", "La ubicación ya estaba archivada");
+      const remainingStock = locationStockLevels(state, current.id).filter((level) => Math.abs(level.onHand) > 1e-9);
+      if (remainingStock.length > 0) {
+        return reject(
+          "inventory.location_has_stock",
+          `No se puede archivar ${current.name} mientras tenga existencias; traslada o ajusta el stock primero`,
+        );
+      }
       state.locations.set(current.id, { ...current, archived: true, updatedAt: event.at });
       return null;
     }
