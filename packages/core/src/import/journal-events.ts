@@ -9,7 +9,7 @@ export function groupEventsByMonth(events: readonly AnyEvent[]): Map<string, Any
 
   for (const event of events) {
     const month = event.at.slice(0, 7);
-    if (!/^\\d{4}-(0[1-9]|1[0-2])$/.test(month) || !Number.isFinite(Date.parse(event.at))) {
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month) || !Number.isFinite(Date.parse(event.at))) {
       throw new RangeError(`Evento ${event.id} tiene instante inválido: ${event.at}`);
     }
     const bucket = grouped.get(month) ?? [];
