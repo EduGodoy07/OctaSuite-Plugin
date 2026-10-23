@@ -2090,7 +2090,7 @@ export function locationStockLevels(state: State, locationId: string): LocationS
     if ((adjustment.locationId ?? PRIMARY_LOCATION_ID) === locationId) ids.add(adjustment.productId);
   }
   if (locationId === PRIMARY_LOCATION_ID) {
-    for (const [id, level] of stockLevels(state)) {
+    for (const id of stockLevels(state).keys()) {
       const product = state.products.get(id);
       if (product && isKit(product)) continue;
       if (locationStock(state, locationId, id) !== 0) ids.add(id);
