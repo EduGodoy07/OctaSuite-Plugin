@@ -1,12 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
   activeLocations,
+  computeInvoiceTotals,
   fromDecimal,
   isEventEnvelope,
   locationById,
   locationStock,
   locationStockLevels,
   project,
+  stockOf,
+  totalsSnapshot,
+  type InvoiceLine,
   transfersOf,
   type AnyEvent,
 } from "../src/index.js";
@@ -200,5 +204,74 @@ describe("Traslados entre ubicaciones", () => {
   it("los nuevos tipos pasan el validador de envoltura", () => {
     expect(isEventEnvelope(ubicacion("bodega", "Bodega Norte"))).toBe(true);
     expect(isEventEnvelope(traslado("t1", "main", "bodega", [{ productId: "p1", quantity: 1 }]))).toBe(true);
+  });
+});
+
+describe("Devoluciones a ubicación de inventario", () => {
+  it("devuelve unidades a la ubicación seleccionada sin inflar la principal", () => {
+    const lines: InvoiceLine[] = [
+      { description: "Venta", quantity: 2, unitPrice: q("10.00"), taxRate: 12, productId: "p1" },
+    ];
+    const invoice = evt("invoice.issued", {
+      invoiceId: "i-return",
+      series: "A",
+      number: 1,
+      date: "2026-08-25",
+      currency: "GTQ",
+      lines,
+      totals: totalsSnapshot(computeInvoiceTotals(lines, "GTQ")),
+      partnerName: "Cliente",
+      partnerTaxId: "CF",
+    });
+    const credit = evt("invoice.refunded", {
+      creditNoteId: "cn-return",
+      invoiceId: "i-return",
+      date: "2026-08-27",
+      amount: q("11.20"),
+      reason: "Cambio de producto",
+      type: "exchange",
+      lines: [{ productId: "p1", quantity: 1, unitPrice: q("10.00"), taxRate: 12 }],
+      stockReturnLocationId: "bodega",
+    });
+
+    const { state, rejected } = project([...base(), invoice, credit]);
+    expect(rejected).toEqual([]);
+    expect(stockOf(state, "p1")).toBe(9); // 10 recibidos - 2 vendidos + 1 devuelto
+    expect(locationStock(state, "main", "p1")).toBe(8); // la devolución no va a principal
+    expect(locationStock(state, "bodega", "p1")).toBe(1);
+    expect(locationStockLevels(state, "bodega")).toEqual([{ productId: "p1", onHand: 1 }]);
+  });
+
+  it("rechaza destino inexistente antes de registrar crédito o ajuste", () => {
+    const lines: InvoiceLine[] = [
+      { description: "Venta", quantity: 2, unitPrice: q("10.00"), taxRate: 12, productId: "p1" },
+    ];
+    const invoice = evt("invoice.issued", {
+      invoiceId: "i-missing-location",
+      series: "A",
+      number: 2,
+      date: "2026-08-25",
+      currency: "GTQ",
+      lines,
+      totals: totalsSnapshot(computeInvoiceTotals(lines, "GTQ")),
+      partnerName: "Cliente",
+      partnerTaxId: "CF",
+    });
+    const credit = evt("invoice.refunded", {
+      creditNoteId: "cn-missing-location",
+      invoiceId: "i-missing-location",
+      date: "2026-08-27",
+      amount: q("11.20"),
+      reason: "Cambio de producto",
+      type: "exchange",
+      lines: [{ productId: "p1", quantity: 1, unitPrice: q("10.00"), taxRate: 12 }],
+      stockReturnLocationId: "no-existe",
+    });
+
+    const { state, rejected } = project([...base().slice(0, 3), invoice, credit]);
+    expect(rejected.map((item) => item.code)).toContain("not_found");
+    expect(state.creditNotes.has("cn-missing-location")).toBe(false);
+    expect(state.invoices.get("i-missing-location")?.creditedTotal.minor).toBe(0);
+    expect(stockOf(state, "p1")).toBe(8);
   });
 });
