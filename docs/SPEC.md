@@ -175,7 +175,13 @@ FEL de SAT. El CUI del DPI usa otro algoritmo y **no** está implementado.
 
 ## 5. Estado actual
 
-- `packages/core`: **251 tests en verde**, typecheck limpio.
+- **Estado de validación:** el workflow de CI es la fuente de verdad por commit
+  (instalación reproducible, suite Vitest, typecheck, build y validación de
+  assets). No mantener una cifra de tests estática en esta especificación.
+- **Release:** `0.10.0-beta.1` está publicada como prerelease, con `main.js`,
+  `manifest.json` y `styles.css`. Ese tag precede a las correcciones de la
+  auditoría posterior; probar y publicar una nueva beta antes de recomendarla
+  para uso con datos importantes.
 - `packages/obsidian-plugin` v0.10.0: instalado y **corriendo** en el vault de
   iCloud, bundle verificado contra la fuente (no solo el resultado de `tsc`,
   ver el incidente al final de `ADR-001`). Contiene:
@@ -197,6 +203,10 @@ FEL de SAT. El CUI del DPI usa otro algoritmo y **no** está implementado.
   - **Facturas**: líneas desde el catálogo con selector de opciones para
     configurables, totales en vivo, correlativo por `LocalNumberAuthority`,
     cobro y notas de crédito con tope en el saldo acreditable.
+  - **Listas de precios**: factor global y overrides por producto, asignados a
+    contactos y aplicados al crear facturas.
+  - **Reportes**: Markdown y CSV offline al vault (`{dataFolder}/reports/`);
+    exportación PDF no está implementada.
   - **Entradas de stock**: recepciones con proveedor y costo; alimenta el
     costo promedio de compra y el aviso de existencia negativa.
   - **Caja**: turno de un solo cajero (fondo, ingresos/retiros con motivo),
@@ -207,8 +217,9 @@ FEL de SAT. El CUI del DPI usa otro algoritmo y **no** está implementado.
   - **Nómina**: puesto por empleado, jefe directo (`managerId`) y
     responsabilidades desde el catálogo común; pestaña **Organigrama** con la
     cadena de mando y aviso de ciclos/referencias rotas en la carga.
-  - **Inventario**: edición de nombre y tipo de ubicación (`location_updated`),
-    con la ubicación principal protegida (`inventory.immutable_primary`).
+  - **Inventario**: ubicaciones, traslados, cantidades fraccionarias, guardia
+    para no archivar ubicaciones con existencias y retorno de stock de notas de
+    crédito a la ubicación seleccionada. La ubicación principal es inmutable.
   - **Pagos**: cuentas por pagar sobre las entradas de stock — espejo de
     Facturas del lado de las compras. `PaymentModal` es ahora compartido entre
     cobrar (Facturas/Caja) y pagar (Pagos), mismo flujo de forma de pago+fecha.
@@ -234,15 +245,29 @@ FEL de SAT. El CUI del DPI usa otro algoritmo y **no** está implementado.
 | FEL fuera de alcance en v1 | Técnicamente posible vía `requestUrl()`, pero exige custodia de credenciales del certificador dentro del vault y una pista de auditoría que hoy no existe |
 | Algoritmo de NIT sin confirmar contra fuente oficial | Ver sección 4 |
 | Sin migración de esquema de eventos | `EVENT_VERSION = 1`. Cualquier cambio incompatible exige un migrador que reescriba el journal |
+| Devolución tipo exchange incompleta | Las líneas nuevas de cambio se guardan en la nota; todavía no se emite automáticamente la factura nueva ni se descuenta su inventario. Ver `BACKLOG.md` / B-05 |
+| Sin feedback de cuenta para tender de reembolso no reconocido | Se evita publicar contra una cuenta arbitraria, pero falta un mensaje explícito cuando no hay cuenta compatible |
 
 ---
 
-## 7. Roadmap
+## 7. Roadmap actual (revisión 2026-10-22)
 
-1. **v0.1 (hecho)** — core + journal + gastos + tablero.
-2. **v0.2** — contactos y productos en UI; notas markdown por contacto para
-   enlazarlas desde el vault.
-3. **v0.3** — facturación: modal de emisión, nota markdown por factura con
-   frontmatter (para que Dataview la consulte), notas de crédito.
-4. **v0.4** — export: CSV/JSON local. Ver `docs/EXPORT.md` cuando exista.
-5. **v0.5** — presupuestos, heatmap de calendario, export PDF.
+El roadmap histórico v0.1–v0.5 de la especificación inicial ya no representa la
+cobertura real. Usar el [backlog vivo](../BACKLOG.md) para prioridades y las
+ejecuciones de GitHub Actions para el estado de validación del commit.
+
+1. **Beta BRAT:** validar cada nueva prerelease en un vault desechable antes de
+   mover datos de trabajo. La `0.10.0-beta.1` publicada no incluye las correcciones
+   posteriores de exportación, inventario y tender.
+2. **B-05 — exchange completo:** emitir la factura de reemplazo y descontar su
+   inventario de forma atómica, manteniendo trazabilidad entre factura original,
+   nota de crédito y nueva factura.
+3. **Control contable:** mostrar y tratar explícitamente los tender que no tengan
+   cuenta de diario compatible; nunca adivinar una cuenta de activo.
+4. **Respaldo y recuperación:** definir export, restore y validación de integridad
+   del journal antes de agregar respaldo automático.
+5. **Migraciones:** diseñar una estrategia explícita para evolucionar
+   `EVENT_VERSION` sin perder compatibilidad con journals ya guardados.
+6. **Pendientes de producto:** export PDF y rutas geolocalizadas; ambos siguen
+   fuera del conjunto implementado.
+
