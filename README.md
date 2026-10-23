@@ -25,6 +25,12 @@ npm run build         # bundle de producción -> packages/obsidian-plugin/main.j
 npm run dev           # esbuild en watch
 ```
 
+Este repositorio usa **npm workspaces** como gestor canónico (`package-lock.json`).
+Para CI y reproducciones limpias usa `npm ci`. No mezcles lockfiles de otros
+gestores de paquetes. Los cambios de código deben ir por rama + Pull Request;
+`scripts/sync-push.sh` está retirado porque pertenecía a una topología antigua
+y podía hacer `rsync --delete` y push directo a `main`.
+
 ## Instalar en un vault para probar
 
 El plugin necesita `main.js`, `manifest.json` y `styles.css` en una carpeta dentro
@@ -41,6 +47,15 @@ cp packages/obsidian-plugin/{main.js,manifest.json,styles.css} "$DEST/"
 Después: Obsidian → Configuración → Plugins de la comunidad → activar
 "OctaSuite Lite". Para desarrollo continuo, enlaza en vez de copiar
 (`ln -s`) y usa `npm run dev`.
+
+## Exportación de reportes y funciones pendientes
+
+Los reportes se pueden exportar a Markdown o CSV dentro de
+`{dataFolder}/reports/`. La exportación PDF aún no está implementada. El tipo
+de nota de crédito `exchange` registra las líneas nuevas, pero todavía no crea
+por sí solo la factura de reemplazo ni descuenta su inventario; consulta
+[`BACKLOG.md`](BACKLOG.md), B-05, antes de usar ese flujo como un intercambio
+completo.
 
 > Prueba primero en un vault desechable, no en el de trabajo: el plugin crea la
 > carpeta `octasuite-data/` y escribe en ella.
