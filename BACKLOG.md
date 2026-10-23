@@ -1,11 +1,18 @@
 # Backlog — OctaSuite Plugin (Obsidian + core puro)
 
-> Generado 2026-09-04 a partir de: (1) análisis de feature requests de comunidades
-> Square / Odoo / Shopify, (2) comparación contra Odoo CE, (3) verificación directa
-> en el código del repo (`packages/core/src` y `packages/obsidian-plugin/src`).
+> Revisado 2026-10-22 (Guatemala) tras la publicación de `0.10.0-beta.1` y la
+> auditoría funcional de la beta. El estado debe comprobarse contra el código y CI
+> del commit actual; las notas históricas de sesiones más abajo no son un inventario
+> de estado vigente.
 >
-> Regla de oro: **nada de esto se implementa sin TDD (RED → GREEN)** y sin
-> `npm run typecheck` + suite completa en verde antes de `npm run deploy`.
+> **Toolchain canónico:** npm workspaces + `package-lock.json`; CI ejecuta
+> `npm ci`, `npm test`, `npm run typecheck` y `npm run build`. Los archivos
+> pnpm heredados no representan estos workspaces y se retirarán. El antiguo
+> `scripts/sync-push.sh` queda bloqueado; no usar `rsync --delete` ni push directo
+> a `main`.
+>
+> **Regla de oro:** cualquier cambio funcional va por TDD (RED → GREEN) y Pull
+> Request con CI verde. Desplegar en un vault real es una comprobación manual aparte.
 
 ## Estado del mapa (cobertura actual — verificado en código)
 
@@ -18,15 +25,27 @@ funcional** es comparable al de una suite comercial.
 **Moat que no se toca:** localización guatemalteca (NIT, IVA 12%, FEL/DTE,
 IGSS, bono 14) — ninguna plataforma de las comunidades comparadas la tiene.
 
-**Lo que la profundidad NO tiene todavía** (verificado con grep, 2026-09-04):
+**Estado verificado — 2026-10-22**
+- **B-01 — Crédito de cliente:** implementado en dominio y UI de Caja/Contactos.
+- **B-02 — Descuentos por línea en factura de venta:** implementados con tipo y
+  cálculo explícitos; el soporte de descuentos en recibos está registrado por
+  separado en el historial de auditoría.
+- **B-03 — Listas de precios:** implementadas (factor y overrides, asignación por
+  cliente y aplicación al crear facturas).
+- **B-04 — Exportación de reportes:** Markdown y CSV al vault están implementados;
+  exportación PDF sigue pendiente.
+- **B-05 — Notas de crédito/devoluciones:** reembolso a tender, store credit,
+  retorno de inventario y destino por ubicación están soportados. El flujo
+  **exchange** sigue parcial: registra las líneas nuevas, pero no emite
+  automáticamente una factura nueva.
+- **B-08 — Rutas geolocalizadas:** no implementadas.
+- **Operación / confiabilidad:** restauración desde backup propio, migración
+  explícita de esquema del journal y prueba automatizada de UI en Obsidian
+  siguen siendo trabajo futuro.
 
-- `discount|descuento` solo existe en `domain/payroll.ts` y `ui/reward-modal.ts`
-  → descuento por línea en ventas NO existe.
-- `store credit|crédito de cliente|customerCredit` → 0 hits.
-- `pricelist|lista de precio|precio por cliente` → 0 hits.
-- Export PDF de reportes → no verificado (hay `reports-view.ts`, sin export).
-- Refund/devolución → existe solo nota de crédito (`credit-note-modal.ts`).
-
+La beta publicada `0.10.0-beta.1` precede a las correcciones posteriores a su tag.
+La candidata `0.10.0-beta.2` incorpora esas correcciones y requiere smoke test
+antes de publicarse como nueva prerelease.
 ---
 
 ## Prioridad 1 — impacto comunitario alto + alineado con el moat GT
@@ -45,7 +64,8 @@ IGSS, bono 14) — ninguna plataforma de las comunidades comparadas la tiene.
   (10 tests en verde), suite completa 323/323, typecheck 0, deploy instalado.
 - **Alcance:** saldo de crédito por partner (multi-moneda); abono manual;
   tender "crédito" en caja con validación de saldo; consumos referenciados a
-  factura. Queda fuera (posible B-05): devolución con destino a crédito.
+  factura. El saldo a favor generado por nota de crédito se registra en B-05,
+  no es el mismo flujo que cobrar con saldo ya existente en Caja.
 - **Archivos:** `packages/core/src/domain/credit.ts`, `domain/loyalty.ts`
   (referencia), `events.ts`, `store.ts`, `index.ts`,
   `ui/register-view.ts`, `ui/partners-view.ts`.
@@ -156,43 +176,50 @@ IGSS, bono 14) — ninguna plataforma de las comunidades comparadas la tiene.
   carpeta ya existe — en Obsidian real `createFolder` lanza si existe, y el
   test `reports-vault.test.ts` lo enmascara simulando idempotencia. Debería
   revisarse en otro cambio.
-- **Pendiente para push:** confirmación explícita de Eduardo (`scripts/sync-push.sh`).
+- **Push/sync:** el script histórico `scripts/sync-push.sh` quedó retirado por
+  usar `rsync --delete` y hacer push directo a `main`; los cambios van por PR.
 
 ### B-03 · Dual pricing / listas de precios por cliente
-- **Por qué:** Square pide precio in-store vs online; Odoo lo resuelve con
-  pricelists. Es la base para B2B vs retail.
-- **Estado:** no existe (`pricelist` → 0 hits).
-- **Alcance probable:** pricelist por partner o grupo; override por producto;
-  precio de venta resuelto en el momento de crear invoice/receipt; sin tocar
-  el costo (costing sigue en el producto).
-- **Archivos:** `packages/core/src/domain/product.ts`, `domain/partner.ts`,
-  `ui/product-modal.ts`, `ui/customer-picker.ts`, `ui/receipt-modal.ts`.
-- **Dependencias:** ideal tras B-02 (misma zona de líneas de venta).
+- **Estado:** implementado en dominio y UI. `domain/pricelist.ts` calcula el
+  factor global y los overrides por producto; `VaultPricelists` persiste el
+  catálogo; `partner-modal.ts` asigna lista al cliente y
+  `invoice-editor-modal.ts` la aplica al crear factura.
+- **Pendiente de alcance:** comprobar si la lista también debe afectar
+  recepciones, cotizaciones futuras u otros canales de venta; no asumir que el
+  soporte de factura implica todos esos flujos.
+- **Archivos:** `packages/core/src/domain/pricelist.ts`,
+  `packages/obsidian-plugin/src/storage/vault-pricelists.ts`,
+  `packages/obsidian-plugin/src/ui/pricelist-manager-modal.ts`,
+  `partner-modal.ts`, `invoice-editor-modal.ts`.
+- **Criterio de seguridad:** ninguna lista de venta debe modificar costo o
+  valoración de inventario.
 
 ### B-04 · Reportes profesionales exportables (PDF/CSV)
-- **Por qué:** gap "básico" en todas las comunidades; en GT los reportes se
-  adjuntan a trámites (SAT, bancos).
-- **Estado:** `reports-view.ts` existe; export no verificado. La exportación
-  puede ser markdown/CSV vía vault (sin servidor) y/o PDF si se acepta
-  dependencia de render (decidir si entra o se deja en `soon`).
-- **Alcance probable:** export CSV/Markdown nativo (vault, offline); opción
-  PDF como `soon` si requiere librería pesada (8GB RAM).
-- **Archivos:** `packages/obsidian-plugin/src/ui/reports-view.ts`.
-- **Dependencias:** ninguno.
+- **Estado:** Markdown y CSV se exportan offline a `{dataFolder}/reports/`.
+  PR #3 corrigió la creación de carpetas ya existentes y el armado de rutas;
+  el test ahora simula el contrato real de Obsidian.
+- **Pendiente:** exportación PDF. Mantenerla separada de los exports nativos
+  para no añadir dependencias pesadas sin una decisión explícita.
+- **Archivos:** `packages/obsidian-plugin/src/ui/report-export.ts`,
+  `packages/obsidian-plugin/src/ui/reports-view.ts`,
+  `packages/obsidian-plugin/tests/reports-vault.test.ts`.
 
 ### B-05 · Refund/devolución flexible
-- **Por qué:** pedido recurrente; Square permite devolución a crédito, a
-  tender original o exchange.
-- **Estado:** parcial — existe nota de crédito (`credit-note-modal.ts`).
-- **Alcance probable:** extender a exchange (cambio de producto con
-  diferencia), devolución de stock a localización, devolución parcial por
-  tenders con monto exacto. Reglas de journal para no romper partida doble.
-- **Archivos:** `packages/core/src/domain/invoice.ts`, `domain/stock.ts`,
-  `ui/credit-note-modal.ts`.
-- **Dependencias:** ninguna; puede apoyarse en B-01 (crédito como destino de
-  devolución).
-
-### B-08 · Rutas con geolocalización
+- **Estado:** parcial, no paridad completa.
+- **Implementado:** notas `store_credit`, reembolso a los métodos disponibles
+  (Efectivo, Tarjeta, Transferencia), devoluciones parciales y ajustes de stock
+  dirigidos a una ubicación. PR #4 hizo que el reducer respetara
+  `stockReturnLocationId` y validara el destino antes de mutar factura/nota.
+- **Pendiente crítico:** en tipo `exchange`, las líneas nuevas quedan registradas
+  en la nota, pero aún no se emite automáticamente una nueva factura ni se
+  descuenta inventario para los nuevos productos. No presentar el intercambio
+  como flujo completo hasta cerrar la emisión contable y de stock.
+- **Pendiente de control contable:** los tender no reconocidos ya no se asignan
+  a Caja por fallback; si no existe cuenta compatible, el flujo actual puede
+  guardar la nota sin asiento de tender. Mejorar el feedback/rechazo explícito.
+- **Archivos:** `packages/core/src/domain/invoice.ts`, `packages/core/src/store.ts`,
+  `packages/obsidian-plugin/src/ui/credit-note-modal.ts`,
+  `packages/obsidian-plugin/src/ui/invoices-view.ts`.### B-08 · Rutas con geolocalización
 - **Por qué:** pedido de Eduardo (2026-09-18). Para field service / entregas /
   visitas se necesita registrar rutas, paradas y coordenadas. Verificado: ni el
   ERP OctaSuite (Laravel) ni el plugin tienen geolocalización (0 hits de
@@ -251,16 +278,21 @@ queda pendiente de confirmación final.
 - **Ítem 5 — Docs (este cambio):** excepción del task-store documentada en
   `AGENTS.md`; cifra real de la suite actualizada (560+).
 
-### Pendiente
+### Estado después de la auditoría 2026-10-22
 
-- **Ítem 6 — Verificación final y deploy:** `npm test` + `npm run typecheck`
-  + `npm run build` + deploy al vault activo (Cmd+R) — diferido al cierre
-  aprobado por Eduardo, sin commit/push (regla: solo con confirmación
-  explícita; `scripts/sync-push.sh` NO ejecutar).
-- **Staging — Ubicaciones secundarias en devoluciones/stock:** decisión
-  aprobada: `stockReturnLocationId` NO es PRIMARY → se valida/rechaza en
-  emisión (ya mantenido en el reducer histórico); soporte real de
-  localizaciones secundarias de retorno queda en BACKLOG, requiere TDD.
+- CI de `main` aprobado en el commit `2d281a7`: consulta el estado del commit
+  actual en [GitHub Actions](https://github.com/EduGodoy07/OctaSuite-Plugin/actions).
+  La cuenta exacta de tests es específica de cada commit y no debe reutilizarse
+  como cifra estática.
+- **Inventario — corregido:** PR #4 asigna devoluciones de stock a la ubicación
+  elegida; PR #5 bloquea archivar ubicaciones con existencias y permite
+  cantidades fraccionarias en traslados. Si el journal ya tenía una ubicación
+  archivada con stock, revisar los eventos rechazados tras el replay.
+- **Contabilidad — corregido:** PR #6 elimina el fallback que enviaba un tender
+  desconocido a la primera cuenta de activo; métodos sin cuenta compatible aún
+  requieren mejor feedback al usuario.
+- **Release:** `0.10.0-beta.1` está publicada, pero antecede a las correcciones
+  indicadas. La siguiente beta necesita smoke test de los cambios nuevos.
 
 ---
 
