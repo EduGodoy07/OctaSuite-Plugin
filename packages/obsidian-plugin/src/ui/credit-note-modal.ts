@@ -13,7 +13,7 @@ import {
 } from "@octasuite/core";
 import { App, Modal, Setting, setIcon } from "obsidian";
 
-const TENDER_METHODS = ["Efectivo", "Tarjeta", "Transferencia", "Crédito"] as const;
+const TENDER_METHODS = ["Efectivo", "Tarjeta", "Transferencia"] as const;
 type TenderMethod = (typeof TENDER_METHODS)[number];
 const CREDIT_NOTE_TYPES: readonly { value: CreditNoteType; label: string }[] = [
   { value: "store_credit", label: "Crédito cliente (saldo a favor)" },
