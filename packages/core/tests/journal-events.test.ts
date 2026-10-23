@@ -23,6 +23,21 @@ describe("groupEventsByMonth", () => {
     expect(grouped.get("2026-09")?.map((item) => item.id)).toEqual(["e2"]);
   });
 
+
+  it("deduplicates IDs across the existing journal and within one import batch", async () => {
+    const { filterNewJournalEvents } = await import("../src/import/journal-events.js");
+    const result = filterNewJournalEvents(
+      [
+        event("already-there", "2026-08-01T12:00:00.000Z"),
+        event("new", "2026-09-01T12:00:00.000Z"),
+        event("new", "2026-09-02T12:00:00.000Z"),
+      ],
+      new Set(["already-there"]),
+    );
+    expect(result.fresh.map((item) => item.id)).toEqual(["new"]);
+    expect(result.duplicateCount).toBe(2);
+  });
+
   it("returns an empty map for an empty import", () => {
     expect(groupEventsByMonth([])).toEqual(new Map());
   });
