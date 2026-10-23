@@ -220,6 +220,54 @@ export function validateCreditNoteDraft(draft: CreditNoteDraft): DomainError[] {
 
   const type = draft.type ?? "store_credit";
 
+  const validateLines = (
+    lines: readonly {
+      readonly productId: string;
+      readonly quantity: number;
+      readonly unitPrice: Money;
+      readonly taxRate: number;
+    }[] | undefined,
+    kind: "return" | "exchange",
+  ): void => {
+    if (!lines) return;
+    for (const line of lines) {
+      const label = kind === "return" ? "la devolución" : "el cambio";
+      if (!line.productId || !line.productId.trim()) {
+        errors.push(new DomainError(
+          `Cada línea de ${label} requiere un producto`,
+          kind === "return" ? "credit_note.return_product_required" : "credit_note.exchange_product_required",
+        ));
+      }
+      if (!Number.isFinite(line.quantity) || line.quantity <= 0) {
+        errors.push(new DomainError(
+          `La cantidad de ${label} debe ser mayor que cero`,
+          kind === "return" ? "credit_note.return_quantity_invalid" : "credit_note.exchange_quantity_invalid",
+        ));
+      }
+      if (!Number.isSafeInteger(line.unitPrice.minor) || line.unitPrice.minor < 0) {
+        errors.push(new DomainError(
+          `El precio de ${label} no puede ser negativo ni inválido`,
+          kind === "return" ? "credit_note.return_price_invalid" : "credit_note.exchange_price_invalid",
+        ));
+      }
+      if (!Number.isFinite(line.taxRate) || line.taxRate < 0 || line.taxRate > 100) {
+        errors.push(new DomainError(
+          `La tasa de IVA de ${label} debe estar entre 0 y 100`,
+          kind === "return" ? "credit_note.return_tax_rate_invalid" : "credit_note.exchange_tax_rate_invalid",
+        ));
+      }
+      if (line.unitPrice.currency !== draft.amount.currency) {
+        errors.push(new DomainError(
+          `La moneda de la línea de ${label} debe coincidir con la nota`,
+          kind === "return" ? "credit_note.return_currency_mismatch" : "credit_note.exchange_currency_mismatch",
+        ));
+      }
+    }
+  };
+
+  validateLines(draft.lines, "return");
+  validateLines(draft.exchangeLines, "exchange");
+
   if (type === "refund") {
     if (!draft.tenderRefund) {
       errors.push(new DomainError("El reembolso a tender requiere tenderRefund", "credit_note.refund_requires_tender"));
