@@ -208,6 +208,26 @@ describe("Traslados entre ubicaciones", () => {
 });
 
 describe("Devoluciones a ubicación de inventario", () => {
+  it("un ajuste local aumenta solo esa ubicación y se puede trasladar desde ella", () => {
+    const localAdjustment = evt("stock.adjusted", {
+      adjustmentId: "adj-bodega",
+      date: "2026-08-26",
+      productId: "p1",
+      quantity: 2,
+      reason: "Devolución de cliente",
+      locationId: "bodega",
+    });
+    const { state, rejected } = project([
+      ...base(),
+      localAdjustment,
+      traslado("t-adjusted", "bodega", "main", [{ productId: "p1", quantity: 1 }]),
+    ]);
+    expect(rejected).toEqual([]);
+    expect(stockOf(state, "p1")).toBe(12);
+    expect(locationStock(state, "main", "p1")).toBe(11);
+    expect(locationStock(state, "bodega", "p1")).toBe(1);
+  });
+
   it("devuelve unidades a la ubicación seleccionada sin inflar la principal", () => {
     const lines: InvoiceLine[] = [
       { description: "Venta", quantity: 2, unitPrice: q("10.00"), taxRate: 12, productId: "p1" },
